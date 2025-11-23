@@ -1,0 +1,21 @@
+# Python Bytecode
+__pycache__/
+*.py[cod]
+
+# Environment Configuration
+.env
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+.cursor/
+
+# UV (Project Management)
+# uv.lock should typically be committed if you want reproducible builds,
+# similar to poetry.lock or package-lock.json.
+# If you prefer not to commit it, uncomment the line below:
+# uv.lock
+
+# Misc
+.DS_Store
