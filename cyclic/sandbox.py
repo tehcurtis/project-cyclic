@@ -1,3 +1,4 @@
+import asyncio
 import docker
 from dataclasses import dataclass
 from loguru import logger
@@ -22,9 +23,15 @@ class DockerSandbox:
             logger.info(f"Pulling Docker image: {self.image}...")
             self.client.images.pull(self.image)
 
-    def run(self, code: str, timeout: int = 10) -> ExecutionResult:
+    async def run(self, code: str, timeout: int = 10) -> ExecutionResult:
         """
         Runs the provided Python code in an isolated container.
+        """
+        return await asyncio.to_thread(self._run_sync, code, timeout)
+
+    def _run_sync(self, code: str, timeout: int) -> ExecutionResult:
+        """
+        Synchronous implementation of container execution.
         """
         # 1. Prepare the container config
         # Run 'python -c code' to keep it simple for now.
@@ -87,13 +94,16 @@ class DockerSandbox:
 
 if __name__ == "__main__":
     # Quick Test Loop
-    sandbox = DockerSandbox()
+    async def main():
+        sandbox = DockerSandbox()
 
-    # Test 1: Success
-    print("Test 1 (Expect Success):", sandbox.run("print('Hello from the Jail!')"))
+        # Test 1: Success
+        print("Test 1 (Expect Success):", await sandbox.run("print('Hello from the Jail!')"))
 
-    # Test 2: Failure
-    print("Test 2 (Expect Error):", sandbox.run("import non_existent_module"))
+        # Test 2: Failure
+        print("Test 2 (Expect Error):", await sandbox.run("import non_existent_module"))
 
-    # Test 3: Infinite Loop (Timeout)
-    print("Test 3 (Expect Timeout):", sandbox.run("while True: pass", timeout=2))
+        # Test 3: Infinite Loop (Timeout)
+        print("Test 3 (Expect Timeout):", await sandbox.run("while True: pass", timeout=2))
+
+    asyncio.run(main())
