@@ -2,6 +2,7 @@ import asyncio
 import docker
 from dataclasses import dataclass
 from loguru import logger
+from .safety import scan_code
 
 @dataclass
 class ExecutionResult:
@@ -26,7 +27,17 @@ class DockerSandbox:
     async def run(self, code: str, timeout: int = 10) -> ExecutionResult:
         """
         Runs the provided Python code in an isolated container.
+        Performs static analysis before execution to catch unsafe patterns.
         """
+        # 0. Static Safety Check
+        report = scan_code(code)
+        if not report.is_safe:
+            return ExecutionResult(
+                stdout="",
+                stderr="Safety Violation:\n" + "\n".join(report.issues),
+                exit_code=1
+            )
+
         return await asyncio.to_thread(self._run_sync, code, timeout)
 
     def _run_sync(self, code: str, timeout: int) -> ExecutionResult:
@@ -67,11 +78,10 @@ class DockerSandbox:
                 return ExecutionResult("", f"Execution timed out after {timeout}s", 124)
 
             # 4. Capture logs
-            # demux=True returns a tuple (stdout, stderr)
-            stdout_bytes, stderr_bytes = container.logs(stdout=True, stderr=True, demux=True)
-
-            stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
-            stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+            logs = container.logs(stdout=True, stderr=True)
+            
+            stdout = logs.decode("utf-8", errors="replace") if logs else ""
+            stderr = ""
 
             return ExecutionResult(
                 stdout=stdout,
@@ -100,10 +110,13 @@ if __name__ == "__main__":
         # Test 1: Success
         print("Test 1 (Expect Success):", await sandbox.run("print('Hello from the Jail!')"))
 
-        # Test 2: Failure
+        # Test 2: Failure (Import Error)
         print("Test 2 (Expect Error):", await sandbox.run("import non_existent_module"))
 
         # Test 3: Infinite Loop (Timeout)
         print("Test 3 (Expect Timeout):", await sandbox.run("while True: pass", timeout=2))
+
+        # Test 4: Safety Violation
+        print("Test 4 (Expect Safety Violation):", await sandbox.run("import os; os.system('echo hacked')"))
 
     asyncio.run(main())
