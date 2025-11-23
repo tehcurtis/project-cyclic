@@ -79,7 +79,7 @@ class DockerSandbox:
 
             # 4. Capture logs
             logs = container.logs(stdout=True, stderr=True)
-            
+
             stdout = logs.decode("utf-8", errors="replace") if logs else ""
             stderr = ""
 
