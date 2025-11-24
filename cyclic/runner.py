@@ -47,6 +47,20 @@ def cyclic_guard(event: str, args: tuple[Any, ...]) -> None:
             if normalized.startswith("/tmp/") or normalized == "/tmp":
                 return
 
+            # Allow reading files from standard library locations
+            # This is required for imports to work (reading .pyc files, etc.)
+            # We check if the path starts with sys.base_prefix or sys.base_exec_prefix
+            allowed_prefixes = [sys.base_prefix, sys.base_exec_prefix]
+
+            # Also include site-packages if it's not covered (usually it is)
+            # But be careful not to expose everything if prefix is /
+
+            for prefix in allowed_prefixes:
+                if normalized.startswith(prefix):
+                    # Ensure we don't allow reading sensitive files that might happen to be there
+                    # For now, standard library paths are generally safe to read
+                    return
+
         # Block all other file access
         raise SecurityError(f"Security Violation: File access blocked ({path})")
 
@@ -63,6 +77,8 @@ def create_safe_globals() -> dict[str, Any]:
     safe_builtins = {
         # Basic types
         'int', 'float', 'str', 'bool', 'list', 'dict', 'tuple', 'set',
+        # Import functionality
+        '__import__',
         # Basic functions
         'print', 'len', 'range', 'enumerate', 'zip', 'map', 'filter',
         'sorted', 'reversed', 'min', 'max', 'sum', 'abs', 'round',

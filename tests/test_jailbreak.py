@@ -119,3 +119,73 @@ print(f"Sum: {result}")
     assert result.exit_code == 0
     assert "Sum: 45" in result.stdout
 
+
+@pytest.mark.asyncio
+async def test_standard_library_imports():
+    """Test that standard library imports work correctly."""
+    sandbox = DockerSandbox()
+
+    code = """
+import heapq
+import collections
+import math
+
+# Test heapq
+heap = [3, 1, 4, 1, 5]
+heapq.heapify(heap)
+print(f"Heap: {heap}")
+
+# Test collections
+counter = collections.Counter([1, 1, 1, 2, 2, 3])
+print(f"Counter: {dict(counter)}")
+
+# Test math
+print(f"Pi: {math.pi:.2f}")
+"""
+
+    result = await sandbox.run(code, timeout=5)
+
+    assert result.exit_code == 0
+    assert "Heap:" in result.stdout
+    assert "Counter:" in result.stdout
+    assert "Pi:" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_top_k_frequent_elements():
+    """Test the Top K Frequent Elements algorithm that was failing."""
+    sandbox = DockerSandbox()
+
+    code = """
+import heapq
+from collections import Counter
+
+def top_k_frequent(nums, k):
+    # Count frequencies using Counter (HashMap)
+    count = Counter(nums)
+
+    # Use min-heap to get top k elements
+    # Time complexity: O(N log k) where N is number of elements
+    heap = []
+    for num, freq in count.items():
+        heapq.heappush(heap, (freq, num))
+        if len(heap) > k:
+            heapq.heappop(heap)
+
+    # Extract elements from heap
+    result = [num for freq, num in heap]
+    return result
+
+# Test case from the original prompt
+nums = [1, 1, 1, 2, 2, 3]
+k = 2
+result = top_k_frequent(nums, k)
+print(f"Result: {sorted(result)}")
+assert sorted(result) == [1, 2], f"Expected [1, 2], got {result}"
+"""
+
+    result = await sandbox.run(code, timeout=5)
+
+    assert result.exit_code == 0
+    assert "Result: [1, 2]" in result.stdout
+

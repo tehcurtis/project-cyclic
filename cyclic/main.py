@@ -97,6 +97,11 @@ class CyclicLoop:
             # Evaluate
             if result.exit_code == 0:
                 console.print("\n[bold green]✓ Success![/bold green]")
+
+                # Print the generated code so user can see comments/implementation
+                console.print("\n[bold]Generated Code:[/bold]")
+                console.print(Syntax(agent_response.code, "python", theme="monokai"))
+
                 if result.stdout:
                     console.print("\n[bold]Output:[/bold]")
                     console.print(Panel(result.stdout.strip(), border_style="green"))
@@ -187,6 +192,7 @@ def run(
         if result.exit_code == 0:
             console.print(f"\n[green]Completed in {attempts} attempt(s)[/green]")
         else:
+            console.print(f"[bold red]Sandbox Error:[/bold red] {result.stderr}")
             console.print(f"\n[red]Failed after {attempts} attempt(s)[/red]")
             raise typer.Exit(code=1)
     except KeyboardInterrupt:
