@@ -1,5 +1,6 @@
 import asyncio
 import docker
+import pathlib
 from dataclasses import dataclass
 from loguru import logger
 from .safety import scan_code
@@ -14,7 +15,15 @@ class DockerSandbox:
     def __init__(self, image: str = "python:3.14-slim"):
         self.client = docker.from_env()
         self.image = image
+        self._runner_path = self._get_runner_path()
         self._pull_image()
+
+    def _get_runner_path(self) -> pathlib.Path:
+        """Get the absolute path to runner.py."""
+        # Get the directory where this file (sandbox.py) is located
+        current_file = pathlib.Path(__file__)
+        runner_path = current_file.parent / "runner.py"
+        return runner_path.resolve()
 
     def _pull_image(self):
         """Ensure the image exists locally to avoid runtime latency."""
@@ -43,45 +52,75 @@ class DockerSandbox:
     def _run_sync(self, code: str, timeout: int) -> ExecutionResult:
         """
         Synchronous implementation of container execution.
+        Uses runner.py with PEP 578 audit hooks for runtime security.
         """
-        # 1. Prepare the container config
-        # Run 'python -c code' to keep it simple for now.
+        # Mount runner.py into container at /runner.py (read-only)
+        volumes = {
+            str(self._runner_path): {
+                'bind': '/runner.py',
+                'mode': 'ro'
+            }
+        }
 
-        command = ["python", "-c", code]
+        command = ["python", "/runner.py"]
 
         container = None
         try:
-            # 2. Spin up the container
-            # 'network_disabled=True' prevents the AI from making web requests (Safety)
-            container = self.client.containers.run(
-                self.image,
-                command=command,
-                detach=True,
-                network_disabled=True,
-                # Stop the container if it exceeds memory limits (128MB)
-                mem_limit="128m",
-                cpu_period=100000,
-                cpu_quota=100000,
-                # Security Hardening
-                user="65534:65534",  # 'nobody' user
-                working_dir="/tmp",
-                read_only=True,
-                tmpfs={'/tmp': ''},
-            )
+            # Spin up the container with security hardening
+            # Pass code via environment variable to avoid stdin race conditions
+            try:
+                container = self.client.containers.run(
+                    self.image,
+                    command=command,
+                    detach=True,
+                    network_disabled=True,  # Block network access
+                    environment={"CYCLIC_CODE_PAYLOAD": code},  # Pass code via env var
+                    # Resource limits
+                    mem_limit="128m",
+                    cpu_period=100000,
+                    cpu_quota=100000,
+                    # Security hardening
+                    user="65534:65534",  # 'nobody' user
+                    working_dir="/tmp",
+                    read_only=True,  # Read-only filesystem
+                    tmpfs={'/tmp': ''},  # Writable /tmp via tmpfs
+                    volumes=volumes,  # Mount runner.py
+                    cap_drop=['ALL'],  # Drop all Linux capabilities
+                )
+            except docker.errors.APIError as e:
+                logger.error(f"Failed to create container: {e}")
+                return ExecutionResult("", f"Failed to create container: {e}", 1)
+            except Exception as e:
+                logger.error(f"Unexpected error during container creation: {e}")
+                return ExecutionResult("", f"Container creation failed: {e}", 1)
 
-            # 3. Wait for result (with timeout)
+            if container is None:
+                return ExecutionResult("", "Container creation returned None", 1)
+
+            # Wait for result (with timeout)
             try:
                 result = container.wait(timeout=timeout)
                 exit_code = result.get("StatusCode", 1)
             except Exception:
-                container.kill()
+                # Timeout or other wait error
                 return ExecutionResult("", f"Execution timed out after {timeout}s", 124)
 
-            # 4. Capture logs
+            # Capture logs
             logs = container.logs(stdout=True, stderr=True)
 
-            stdout = logs.decode("utf-8", errors="replace") if logs else ""
-            stderr = ""
+            # Split stdout and stderr
+            # Docker combines them, but we can try to separate if needed
+            # For now, treat all as stdout unless exit_code != 0
+            log_output = logs.decode("utf-8", errors="replace") if logs else ""
+
+            if exit_code == 0:
+                stdout = log_output
+                stderr = ""
+            else:
+                # On error, try to separate stderr (security violations go to stderr)
+                # Since we can't perfectly separate, put everything in stderr for errors
+                stdout = ""
+                stderr = log_output
 
             return ExecutionResult(
                 stdout=stdout,

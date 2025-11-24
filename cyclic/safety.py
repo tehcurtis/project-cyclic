@@ -13,7 +13,8 @@ class SafetyScanner(ast.NodeVisitor):
         # Blocked modules
         self.blocked_imports: Set[str] = {'os', 'subprocess', 'sys', 'socket', 'shutil', 'importlib'}
         # Blocked built-in functions
-        self.blocked_functions: Set[str] = {'eval', 'exec', 'open', '__import__'}
+        # Note: 'open' is allowed here - runtime audit hooks will restrict file access
+        self.blocked_functions: Set[str] = {'eval', 'exec', '__import__'}
 
     def visit_Import(self, node: ast.Import):
         for alias in node.names:
