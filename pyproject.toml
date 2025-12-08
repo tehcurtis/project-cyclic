@@ -3,12 +3,14 @@ name = "project-cyclic"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12,<3.13"
 dependencies = [
+    "chromadb>=0.4.24",
     "docker>=7.1.0",
     "litellm>=1.80.5",
     "loguru>=0.7.3",
     "python-dotenv>=1.2.1",
+    "tenacity>=8.2.0",
     "typer[all]>=0.20.0",
 ]
 
