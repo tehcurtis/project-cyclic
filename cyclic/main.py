@@ -7,7 +7,7 @@ from rich.syntax import Syntax
 from loguru import logger
 
 from .agent import Agent, AgentResponse
-from .cache import SemanticCache, CacheHit
+from .cache import SemanticCache
 from .sandbox import DockerSandbox, ExecutionResult
 
 app = typer.Typer(help="Cyclic: Self-healing code execution agent")
@@ -267,12 +267,11 @@ def stats():
     """Show cache statistics."""
     try:
         cache = SemanticCache()
-        stats = cache.get_stats()
+        stats = asyncio.run(cache.get_stats())
         console.print("\n[bold cyan]Cache Statistics[/bold cyan]\n")
         console.print(f"Total entries: {stats['total_entries']}")
-        console.print(f"Hits: {stats['hits']}")
-        console.print(f"Misses: {stats['misses']}")
-        console.print(f"Hit rate: {stats['hit_rate']:.2%}")
+        cache_size_mb = stats['cache_size_bytes'] / (1024 * 1024)
+        console.print(f"Cache size: {cache_size_mb:.2f} MB")
         console.print(f"Cache directory: {stats['cache_dir']}")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
