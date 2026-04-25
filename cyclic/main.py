@@ -48,12 +48,12 @@ class CyclicLoop:
         self.max_history_messages = max_history_messages
         self.history: list[dict] = []
 
-    async def run(self, prompt: str) -> tuple[AgentResponse, ExecutionResult, int]:
+    async def run(self, prompt: str) -> tuple[AgentResponse, ExecutionResult, int, bool]:
         """
         Execute the self-healing loop.
 
         Returns:
-            Tuple of (final_agent_response, final_execution_result, attempt_count)
+            Tuple of (final_agent_response, final_execution_result, attempt_count, served_from_cache)
         """
         if self.max_retries <= 0:
             raise ValueError("max_retries must be greater than 0")
@@ -72,34 +72,37 @@ class CyclicLoop:
                 console=console,
             ) as progress:
                 task = progress.add_task("Checking cache...", total=None)
-                cache_hit = await self.cache.search(prompt)
+                cached = await self.cache.search(prompt)
                 progress.update(task, description="[green]Cache check complete[/green]")
 
-            if cache_hit:
-                console.print(f"\n[bold cyan]✓ Cache hit![/bold cyan] (similarity: {cache_hit.similarity:.2f})")
+            if cached:
+                console.print(f"\n[bold cyan]✓ Cache hit![/bold cyan] (similarity: {cached.similarity:.2f})")
                 console.print("\n[bold]Cached Code:[/bold]")
-                console.print(Syntax(cache_hit.code, "python", theme="monokai"))
+                console.print(Syntax(cached.code, "python", theme="monokai"))
 
-                if cache_hit.execution_result.stdout:
+                if cached.execution_result.stdout:
                     console.print("\n[bold]Output:[/bold]")
-                    console.print(Panel(cache_hit.execution_result.stdout.strip(), border_style="green"))
+                    console.print(Panel(cached.execution_result.stdout.strip(), border_style="green"))
 
                 # Reconstruct AgentResponse from cache
                 agent_response = AgentResponse(
-                    code=cache_hit.code,
-                    reasoning=cache_hit.reasoning,
-                    confidence=cache_hit.confidence,
+                    code=cached.code,
+                    reasoning=cached.reasoning,
+                    confidence=cached.confidence,
                 )
-                result = cache_hit.execution_result
+                result = cached.execution_result
 
                 # Add to history
                 self._add_to_history({"role": "user", "content": prompt})
+                assistant_body = f"```python\n{agent_response.code}\n```"
+                if result.stdout:
+                    assistant_body += f"\n\nOutput: {result.stdout}"
                 self._add_to_history({
                     "role": "assistant",
-                    "content": f"```python\n{agent_response.code}\n```\n\nOutput: {result.stdout}"
+                    "content": assistant_body,
                 })
 
-                return agent_response, result, 1
+                return agent_response, result, 0, True
 
         while attempt < self.max_retries:
             attempt += 1
@@ -160,7 +163,7 @@ class CyclicLoop:
                     "content": f"```python\n{agent_response.code}\n```\n\nOutput: {result.stdout}"
                 })
 
-                return agent_response, result, attempt
+                return agent_response, result, attempt, False
 
             # Failure - prepare feedback for retry
             error_msg = self._format_error(result)
@@ -192,9 +195,9 @@ class CyclicLoop:
 
         # Ensure we have values to return if the loop ran at least once
         if 'agent_response' not in locals() or 'result' not in locals():
-             raise RuntimeError("Loop completed without generating any code")
+            raise RuntimeError("Loop completed without generating any code")
 
-        return agent_response, result, attempt
+        return agent_response, result, attempt, False
 
     def _add_to_history(self, message: dict) -> None:
         """Add message to history with sliding window limit."""
@@ -245,10 +248,13 @@ def run(
     )
 
     try:
-        agent_response, result, attempts = asyncio.run(loop.run(prompt))
+        agent_response, result, attempts, served_from_cache = asyncio.run(loop.run(prompt))
 
         if result.exit_code == 0:
-            console.print(f"\n[green]Completed in {attempts} attempt(s)[/green]")
+            if served_from_cache:
+                console.print("\n[green]Served from cache[/green]")
+            else:
+                console.print(f"\n[green]Completed in {attempts} attempt(s)[/green]")
         else:
             console.print(f"[bold red]Sandbox Error:[/bold red] {result.stderr}")
             console.print(f"\n[red]Failed after {attempts} attempt(s)[/red]")

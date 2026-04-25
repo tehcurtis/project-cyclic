@@ -1,6 +1,7 @@
 # Python Bytecode
 __pycache__/
 *.py[cod]
+*.egg-info/
 
 # Environment Configuration
 .env

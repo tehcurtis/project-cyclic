@@ -1001,6 +1001,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "chromadb" },
     { name = "docker" },
+    { name = "filelock" },
     { name = "litellm" },
     { name = "loguru" },
     { name = "python-dotenv" },
@@ -1019,6 +1020,7 @@ dev = [
 requires-dist = [
     { name = "chromadb", specifier = ">=0.4.24" },
     { name = "docker", specifier = ">=7.1.0" },
+    { name = "filelock", specifier = ">=3.13" },
     { name = "litellm", specifier = ">=1.80.5" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "python-dotenv", specifier = ">=1.2.1" },

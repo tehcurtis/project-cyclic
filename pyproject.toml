@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "chromadb>=0.4.24",
     "docker>=7.1.0",
+    "filelock>=3.13",
     "litellm>=1.80.5",
     "loguru>=0.7.3",
     "python-dotenv>=1.2.1",

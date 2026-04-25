@@ -2,13 +2,23 @@ import asyncio
 import hashlib
 import os
 import pathlib
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 import chromadb
 from chromadb.config import Settings
+from chromadb.errors import NotFoundError
+from filelock import FileLock
 from litellm import aembedding
+from litellm.exceptions import (
+    APIConnectionError,
+    APIError,
+    RateLimitError,
+    ServiceUnavailableError,
+    Timeout,
+)
 from loguru import logger
 from tenacity import (
     retry,
@@ -38,6 +48,7 @@ class SemanticCache:
 
     COLLECTION_NAME_V1 = "cyclic_semantic_cache_v1"
     COLLECTION_NAME_V2 = "cyclic_semantic_cache_v2"
+    COLLECTION_NAME_V3 = "cyclic_semantic_cache_v3"
     DEFAULT_THRESHOLD = 0.85
 
     def __init__(
@@ -47,7 +58,7 @@ class SemanticCache:
         embedding_model: str = "text-embedding-3-small",
         api_key: Optional[str] = None,
         store_prompt: bool = False,
-        store_outputs: bool = False,
+        store_outputs: bool = True,
     ):
         """
         Initialize the semantic cache.
@@ -57,8 +68,10 @@ class SemanticCache:
             similarity_threshold: Minimum similarity score for cache hits (0.0-1.0)
             embedding_model: LiteLLM embedding model identifier
             api_key: API key for embedding service (defaults to env var)
-            store_prompt: If True, store raw prompt in metadata (default: False)
-            store_outputs: If True, store stdout/stderr in metadata (default: False)
+            store_prompt: If True, persist the raw prompt in Chroma metadata (default: False).
+                Regardless of this flag, the raw prompt is sent to the embedding provider on every
+                cache read and write when an API key is configured.
+            store_outputs: If True, store stdout/stderr in metadata (default: True)
         """
         if cache_dir is None:
             cache_dir = os.path.expanduser("~/.cyclic/cache/")
@@ -74,62 +87,80 @@ class SemanticCache:
 
         self.client = chromadb.PersistentClient(
             path=str(self.cache_dir),
-            settings=Settings(anonymized_telemetry=False)
+            settings=Settings(anonymized_telemetry=False),
         )
 
+        self._proc_lock = FileLock(
+            str(self.cache_dir / ".cyclic_cache.lock"),
+            timeout=10,
+        )
         self._chroma_lock = asyncio.Lock()
-        self.collection = self._get_or_create_collection()
+        self._init_lock = asyncio.Lock()
+        self.collection: chromadb.Collection | None = None
 
-    def _get_or_create_collection(self):
-        """Get or create collection with cosine distance pinned."""
+    def _get_or_create_collection_sync(self):
+        with self._proc_lock:
+            return self._bootstrap_collection_unlocked()
+
+    def _bootstrap_collection_unlocked(self):
+        """Open or create the v3 collection; caller must hold ``_proc_lock``."""
+        collection = None
         try:
-            # Try to get v2 collection (with cosine pinned)
-            try:
-                collection = self.client.get_collection(name=self.COLLECTION_NAME_V2)
-                # Verify it has cosine distance pinned (if metadata is available)
-                try:
-                    metadata = getattr(collection, "metadata", None) or {}
-                    if metadata.get("distance_space") != "cosine":
-                        logger.warning(
-                            f"Collection {self.COLLECTION_NAME_V2} exists but distance space is not pinned to cosine. "
-                            "Recreating with cosine distance."
-                        )
-                        self.client.delete_collection(name=self.COLLECTION_NAME_V2)
-                        collection = None
-                except AttributeError:
-                    logger.debug(f"Collection {self.COLLECTION_NAME_V2} metadata not accessible, assuming cosine")
-            except Exception:
+            collection = self.client.get_collection(name=self.COLLECTION_NAME_V3)
+            metadata = getattr(collection, "metadata", None) or {}
+            if metadata.get("hnsw:space") != "cosine":
+                logger.warning(
+                    f"Collection {self.COLLECTION_NAME_V3} exists but hnsw:space is not cosine. "
+                    "Recreating with cosine distance."
+                )
+                self.client.delete_collection(name=self.COLLECTION_NAME_V3)
                 collection = None
+        except NotFoundError:
+            collection = None
 
-            if collection is None:
+        if collection is None:
+            for old_name in (self.COLLECTION_NAME_V1, self.COLLECTION_NAME_V2):
                 try:
-                    self.client.get_collection(name=self.COLLECTION_NAME_V1)
+                    self.client.get_collection(name=old_name)
                     logger.warning(
-                        f"Found old collection {self.COLLECTION_NAME_V1} without pinned cosine distance. "
-                        f"Migrating to {self.COLLECTION_NAME_V2} with cosine distance."
+                        f"Found legacy semantic cache collection {old_name}. "
+                        f"Active cache is {self.COLLECTION_NAME_V3}; legacy data is not migrated. "
+                        "Run `cache clear` if you want to reclaim disk space."
                     )
-                except Exception:
+                except NotFoundError:
                     pass
 
-                collection = self.client.create_collection(
-                    name=self.COLLECTION_NAME_V2,
-                    metadata={
-                        "description": "Semantic cache for Cyclic code generation",
-                        "distance_space": "cosine",
-                    }
-                )
-                logger.debug(f"Created collection {self.COLLECTION_NAME_V2} with cosine distance")
+            collection = self.client.create_collection(
+                name=self.COLLECTION_NAME_V3,
+                metadata={
+                    "description": "Semantic cache for Cyclic code generation",
+                    "hnsw:space": "cosine",
+                },
+            )
+            logger.debug(f"Created collection {self.COLLECTION_NAME_V3} with cosine distance")
 
-            return collection
+        return collection
 
-        except Exception as e:
-            logger.error(f"Failed to get or create collection: {e}")
-            raise
+    async def _ensure_collection(self) -> None:
+        if self.collection is not None:
+            return
+        async with self._init_lock:
+            if self.collection is None:
+                self.collection = await asyncio.to_thread(self._get_or_create_collection_sync)
 
     def _compute_doc_id(self, prompt: str, code: str) -> str:
         """Compute deterministic document ID from prompt and code."""
-        content = f"{prompt}\0{code}\0{self.embedding_model}"
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+        h = hashlib.sha256()
+        for part in (prompt, code, self.embedding_model):
+            encoded = part.encode("utf-8")
+            h.update(len(encoded).to_bytes(8, "big"))
+            h.update(encoded)
+        return h.hexdigest()
+
+    @staticmethod
+    def _distance_to_similarity(distance: float) -> float:
+        """Map Chroma cosine distance in [0, 2] to similarity in [0, 1]."""
+        return max(0.0, min(1.0, 1.0 - (distance / 2.0)))
 
     @retry(
         stop=stop_after_attempt(3),
@@ -138,11 +169,13 @@ class SemanticCache:
     )
     async def _chroma_query(self, query_embeddings, n_results=1):
         """Execute ChromaDB query in thread pool."""
+
         def _query_sync():
             return self.collection.query(
                 query_embeddings=query_embeddings,
                 n_results=n_results,
             )
+
         return await asyncio.to_thread(_query_sync)
 
     @retry(
@@ -152,33 +185,32 @@ class SemanticCache:
     )
     async def _chroma_upsert(self, ids, embeddings, metadatas):
         """Execute ChromaDB upsert in thread pool."""
+
         def _upsert_sync():
-            try:
-                if hasattr(self.collection, "upsert"):
-                    self.collection.upsert(
-                        ids=ids,
-                        embeddings=embeddings,
-                        metadatas=metadatas,
-                    )
-                else:
-                    existing = self.collection.get(ids=ids)
-                    if existing["ids"]:
-                        self.collection.update(
+            with self._proc_lock:
+                try:
+                    if hasattr(self.collection, "upsert"):
+                        self.collection.upsert(
                             ids=ids,
                             embeddings=embeddings,
                             metadatas=metadatas,
                         )
                     else:
-                        self.collection.add(
-                            ids=ids,
-                            embeddings=embeddings,
-                            metadatas=metadatas,
-                        )
-            except Exception as e:
-                error_msg = str(e).lower()
-                if any(keyword in error_msg for keyword in ["lock", "locked", "timeout", "resource temporarily unavailable", "database"]):
+                        existing = self.collection.get(ids=ids)
+                        if existing["ids"]:
+                            self.collection.update(
+                                ids=ids,
+                                embeddings=embeddings,
+                                metadatas=metadatas,
+                            )
+                        else:
+                            self.collection.add(
+                                ids=ids,
+                                embeddings=embeddings,
+                                metadatas=metadatas,
+                            )
+                except sqlite3.OperationalError as e:
                     raise RuntimeError(f"Database contention: {e}") from e
-                raise
 
         return await asyncio.to_thread(_upsert_sync)
 
@@ -189,11 +221,26 @@ class SemanticCache:
     )
     async def _chroma_count(self):
         """Execute ChromaDB count in thread pool."""
+
         def _count_sync():
             return self.collection.count()
+
         return await asyncio.to_thread(_count_sync)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(
+            (
+                APIConnectionError,
+                APIError,
+                RateLimitError,
+                ServiceUnavailableError,
+                Timeout,
+                TimeoutError,
+            )
+        ),
+    )
     async def _get_embedding(self, text: str) -> list[float]:
         """Generate embedding for text using LiteLLM."""
         try:
@@ -223,6 +270,8 @@ class SemanticCache:
             logger.debug("No API key for embeddings, skipping cache search")
             return None
 
+        await self._ensure_collection()
+
         async with self._chroma_lock:
             try:
                 query_embedding = await self._get_embedding(prompt)
@@ -233,16 +282,16 @@ class SemanticCache:
                     return None
 
                 distance = results["distances"][0][0]
-                similarity = max(0.0, min(1.0, 1.0 - distance))
+                similarity = self._distance_to_similarity(float(distance))
 
                 if similarity < self.similarity_threshold:
                     return None
 
                 metadata = results["metadatas"][0][0]
 
-                prompt_value = metadata.get("prompt") if self.store_prompt else None
-                if prompt_value is None:
-                    prompt_value = metadata.get("prompt_sha256")
+                prompt_value: Optional[str] = None
+                if self.store_prompt:
+                    prompt_value = metadata.get("prompt")
 
                 stdout_value = metadata.get("stdout", "") if self.store_outputs else ""
                 stderr_value = metadata.get("stderr", "") if self.store_outputs else ""
@@ -287,6 +336,8 @@ class SemanticCache:
             logger.debug("No API key for embeddings, skipping cache storage")
             return
 
+        await self._ensure_collection()
+
         async with self._chroma_lock:
             try:
                 embedding = await self._get_embedding(prompt)
@@ -296,8 +347,8 @@ class SemanticCache:
                 metadata = {
                     "code": response.code,
                     "reasoning": response.reasoning,
-                    "confidence": str(response.confidence),
-                    "exit_code": str(result.exit_code),
+                    "confidence": float(response.confidence),
+                    "exit_code": int(result.exit_code),
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "embedding_model": self.embedding_model,
                 }
@@ -325,12 +376,19 @@ class SemanticCache:
 
     async def clear(self) -> None:
         """Clear all entries from the cache."""
-        async with self._chroma_lock:
-            try:
-                def _clear_sync():
-                    self.client.delete_collection(name=self.COLLECTION_NAME_V2)
-                    self.collection = self._get_or_create_collection()
+        await self._ensure_collection()
 
+        async with self._chroma_lock:
+
+            def _clear_sync():
+                with self._proc_lock:
+                    try:
+                        self.client.delete_collection(name=self.COLLECTION_NAME_V3)
+                    except NotFoundError:
+                        pass
+                    self.collection = self._bootstrap_collection_unlocked()
+
+            try:
                 await asyncio.to_thread(_clear_sync)
                 logger.info("Cache cleared")
             except Exception as e:
@@ -339,6 +397,8 @@ class SemanticCache:
 
     async def get_stats(self) -> dict:
         """Get persistent cache statistics."""
+        await self._ensure_collection()
+
         async with self._chroma_lock:
             try:
                 count = await self._chroma_count()

@@ -3,7 +3,7 @@ Tests for semantic cache functionality.
 """
 
 import tempfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -106,8 +106,8 @@ class TestCoreCacheOperations:
     ):
         """Test that dissimilar prompts return None."""
         with patch("cyclic.cache.aembedding") as mock_embedding:
-            store_embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
-            query_embedding = [0.9, 0.8, 0.7, 0.6, 0.5]
+            store_embedding = [1.0, 0.0, 0.0, 0.0, 0.0]
+            query_embedding = [0.0, 1.0, 0.0, 0.0, 0.0]
 
             def embedding_side_effect(*args, **kwargs):
                 mock_response = MagicMock()
@@ -230,6 +230,28 @@ class TestDeterministicIdsAndUpsert:
             stats = await cache.get_stats()
             assert stats["total_entries"] == 2
 
+    @pytest.mark.asyncio
+    async def test_doc_id_null_byte_robustness(
+        self, temp_cache_dir, sample_execution_result, api_key
+    ):
+        """Prompts/code containing NUL must not collide under doc id hashing."""
+        with patch("cyclic.cache.aembedding") as mock_embedding:
+            embedding = [0.1, 0.2, 0.3]
+            mock_response = MagicMock()
+            mock_response.data = [MagicMock()]
+            mock_response.data[0].embedding = embedding
+            mock_embedding.return_value = mock_response
+
+            cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
+
+            r1 = AgentResponse(code="c", reasoning="r1", confidence=0.9)
+            r2 = AgentResponse(code="b\0c", reasoning="r2", confidence=0.8)
+            await cache.store("a\0b", r1, sample_execution_result)
+            await cache.store("a", r2, sample_execution_result)
+
+            stats = await cache.get_stats()
+            assert stats["total_entries"] == 2
+
 
 class TestCosineDistanceSpace:
     """Test cosine distance space pinning."""
@@ -240,14 +262,10 @@ class TestCosineDistanceSpace:
     ):
         """Test that collection is created with cosine distance pinned."""
         cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
+        await cache._ensure_collection()
 
-        # Check metadata if available (ChromaDB API may vary)
-        try:
-            metadata = getattr(cache.collection, "metadata", None) or {}
-            if metadata:
-                assert metadata.get("distance_space") == "cosine"
-        except AttributeError:
-            pass
+        metadata = getattr(cache.collection, "metadata", None) or {}
+        assert metadata.get("hnsw:space") == "cosine"
 
     @pytest.mark.asyncio
     async def test_similarity_within_valid_range(
@@ -268,6 +286,34 @@ class TestCosineDistanceSpace:
 
             assert cache_hit is not None
             assert 0.0 <= cache_hit.similarity <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_similarity_scales_with_distance(
+        self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
+    ):
+        """Orthogonal unit embeddings -> cosine distance 1 -> similarity 0.5."""
+        with patch("cyclic.cache.aembedding") as mock_embedding:
+            emb_store = [1.0, 0.0, 0.0]
+            emb_query = [0.0, 1.0, 0.0]
+
+            def embedding_side_effect(*args, **kwargs):
+                mock_response = MagicMock()
+                mock_response.data = [MagicMock()]
+                if len(mock_embedding.call_args_list) == 1:
+                    mock_response.data[0].embedding = emb_store
+                else:
+                    mock_response.data[0].embedding = emb_query
+                return mock_response
+
+            mock_embedding.side_effect = embedding_side_effect
+
+            cache = SemanticCache(
+                cache_dir=temp_cache_dir, api_key=api_key, similarity_threshold=0.0
+            )
+            await cache.store("a", sample_agent_response, sample_execution_result)
+            cache_hit = await cache.search("b")
+            assert cache_hit is not None
+            assert abs(cache_hit.similarity - 0.5) < 1e-5
 
 
 class TestPrivacyDefaults:
@@ -295,10 +341,10 @@ class TestPrivacyDefaults:
             assert cache_hit.prompt is None
 
     @pytest.mark.asyncio
-    async def test_default_does_not_store_outputs(
+    async def test_outputs_stored_by_default(
         self, temp_cache_dir, sample_agent_response, api_key
     ):
-        """Test that stdout/stderr are not stored by default."""
+        """Test that stdout/stderr are stored by default."""
         with patch("cyclic.cache.aembedding") as mock_embedding:
             embedding = [0.1, 0.2, 0.3]
             mock_response = MagicMock()
@@ -313,8 +359,8 @@ class TestPrivacyDefaults:
 
             cache_hit = await cache.search("test")
             assert cache_hit is not None
-            assert cache_hit.execution_result.stdout == ""
-            assert cache_hit.execution_result.stderr == ""
+            assert cache_hit.execution_result.stdout == "secret output"
+            assert cache_hit.execution_result.stderr == "secret error"
 
     @pytest.mark.asyncio
     async def test_opt_in_stores_prompt_and_outputs(
@@ -498,6 +544,22 @@ class TestErrorHandling:
 
             cache_hit = await cache.search("test")
             assert cache_hit is None
+
+    @pytest.mark.asyncio
+    async def test_get_embedding_does_not_retry_auth_error(self, temp_cache_dir, api_key):
+        from litellm.exceptions import AuthenticationError
+
+        with patch("cyclic.cache.aembedding", new_callable=AsyncMock) as mock_emb:
+            mock_emb.side_effect = AuthenticationError(
+                "bad key", llm_provider="openai", model="text-embedding-3-small"
+            )
+            cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
+            await cache._ensure_collection()
+
+            with pytest.raises(AuthenticationError):
+                await cache._get_embedding("x")
+
+            assert mock_emb.call_count == 1
 
 
 class TestCacheManagement:
