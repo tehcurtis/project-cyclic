@@ -12,7 +12,7 @@ class ExecutionResult:
     exit_code: int
 
 class DockerSandbox:
-    def __init__(self, image: str = "python:3.14-slim"):
+    def __init__(self, image: str = "python:3.12-slim"):
         self.client = docker.from_env()
         self.image = image
         self._runner_path = self._get_runner_path()

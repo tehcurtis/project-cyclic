@@ -997,7 +997,7 @@ wheels = [
 [[package]]
 name = "project-cyclic"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "chromadb" },
     { name = "docker" },
@@ -1025,7 +1025,7 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "tenacity", specifier = ">=8.2.0" },
-    { name = "typer", extras = ["all"], specifier = ">=0.20.0" },
+    { name = "typer", specifier = ">=0.20.0" },
 ]
 
 [package.metadata.requires-dev]

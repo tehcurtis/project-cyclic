@@ -225,7 +225,13 @@ def run(
     timeout: int = typer.Option(10, "--timeout", "-t", help="Execution timeout in seconds"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
     cache: bool = typer.Option(True, "--cache/--no-cache", help="Enable semantic cache"),
-    cache_threshold: float = typer.Option(0.85, "--cache-threshold", help="Cache similarity threshold (0.0-1.0)"),
+    cache_threshold: float = typer.Option(
+        0.85,
+        "--cache-threshold",
+        help="Cache similarity threshold (0.0-1.0)",
+        min=0.0,
+        max=1.0,
+    ),
 ):
     """Run the self-healing code execution loop."""
     console.print("\n[bold cyan]Cyclic: Self-Healing Code Execution[/bold cyan]")

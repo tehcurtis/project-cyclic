@@ -76,6 +76,9 @@ class SemanticCache:
         if cache_dir is None:
             cache_dir = os.path.expanduser("~/.cyclic/cache/")
 
+        if not 0.0 <= similarity_threshold <= 1.0:
+            raise ValueError("similarity_threshold must be between 0.0 and 1.0")
+
         self.cache_dir = pathlib.Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -382,10 +385,15 @@ class SemanticCache:
 
             def _clear_sync():
                 with self._proc_lock:
-                    try:
-                        self.client.delete_collection(name=self.COLLECTION_NAME_V3)
-                    except NotFoundError:
-                        pass
+                    for name in (
+                        self.COLLECTION_NAME_V1,
+                        self.COLLECTION_NAME_V2,
+                        self.COLLECTION_NAME_V3,
+                    ):
+                        try:
+                            self.client.delete_collection(name=name)
+                        except NotFoundError:
+                            pass
                     self.collection = self._bootstrap_collection_unlocked()
 
             try:

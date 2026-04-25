@@ -6,6 +6,7 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from chromadb.errors import NotFoundError
 
 from cyclic.agent import AgentResponse
 from cyclic.cache import SemanticCache
@@ -395,6 +396,12 @@ class TestPrivacyDefaults:
 class TestEdgeCases:
     """Test edge cases and data integrity."""
 
+    @pytest.mark.parametrize("threshold", [-0.01, 1.01])
+    def test_invalid_similarity_threshold_rejected(self, temp_cache_dir, threshold):
+        """Test that cache thresholds must stay within the documented range."""
+        with pytest.raises(ValueError, match="similarity_threshold"):
+            SemanticCache(cache_dir=temp_cache_dir, similarity_threshold=threshold)
+
     @pytest.mark.asyncio
     async def test_empty_cache_returns_none(self, temp_cache_dir, api_key):
         """Test that searching empty cache returns None."""
@@ -586,6 +593,23 @@ class TestCacheManagement:
             await cache.clear()
             stats2 = await cache.get_stats()
             assert stats2["total_entries"] == 0
+
+    @pytest.mark.asyncio
+    async def test_clear_cache_removes_legacy_collections(self, temp_cache_dir, api_key):
+        """Test that clear removes legacy collections as well as the active one."""
+        cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
+        await cache._ensure_collection()
+        cache.client.create_collection(name=SemanticCache.COLLECTION_NAME_V1)
+        cache.client.create_collection(name=SemanticCache.COLLECTION_NAME_V2)
+
+        await cache.clear()
+
+        for name in (SemanticCache.COLLECTION_NAME_V1, SemanticCache.COLLECTION_NAME_V2):
+            with pytest.raises(NotFoundError):
+                cache.client.get_collection(name=name)
+
+        assert cache.collection is not None
+        assert cache.collection.name == SemanticCache.COLLECTION_NAME_V3
 
     @pytest.mark.asyncio
     async def test_cache_stats_persistent_only(

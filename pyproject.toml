@@ -12,8 +12,18 @@ dependencies = [
     "loguru>=0.7.3",
     "python-dotenv>=1.2.1",
     "tenacity>=8.2.0",
-    "typer[all]>=0.20.0",
+    "typer>=0.20.0",
 ]
+
+[project.scripts]
+cyclic = "cyclic.main:app"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cyclic*"]
 
 [dependency-groups]
 dev = [
