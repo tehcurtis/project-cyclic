@@ -10,6 +10,9 @@ __pycache__/
 .vscode/
 .idea/
 .cursor/
+.codex/
+.claude/
+CLAUDE.md
 
 # Misc
 .DS_Store
