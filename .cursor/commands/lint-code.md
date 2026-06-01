@@ -1,1 +1,0 @@
-Run `uv run ruff check --fix` on all added or updated .py files in the current diff.
