@@ -5,14 +5,26 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "chromadb>=0.4.24",
+    "chromadb>=1.0.0",
     "docker>=7.1.0",
+    "filelock>=3.13",
     "litellm>=1.80.5",
     "loguru>=0.7.3",
     "python-dotenv>=1.2.1",
+    "rich>=13.0",
     "tenacity>=8.2.0",
-    "typer[all]>=0.20.0",
+    "typer>=0.20.0",
 ]
+
+[project.scripts]
+cyclic = "cyclic.main:app"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cyclic*"]
 
 [dependency-groups]
 dev = [
