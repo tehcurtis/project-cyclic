@@ -292,7 +292,7 @@ class TestCosineDistanceSpace:
     async def test_similarity_scales_with_distance(
         self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
     ):
-        """Orthogonal unit embeddings -> cosine distance 1 -> similarity 0.5."""
+        """Orthogonal unit embeddings -> cosine distance 1 -> cosine similarity 0.0."""
         with patch("cyclic.cache.aembedding") as mock_embedding:
             emb_store = [1.0, 0.0, 0.0]
             emb_query = [0.0, 1.0, 0.0]
@@ -314,7 +314,7 @@ class TestCosineDistanceSpace:
             await cache.store("a", sample_agent_response, sample_execution_result)
             cache_hit = await cache.search("b")
             assert cache_hit is not None
-            assert abs(cache_hit.similarity - 0.5) < 1e-5
+            assert abs(cache_hit.similarity - 0.0) < 1e-5
 
 
 class TestPrivacyDefaults:
@@ -568,6 +568,36 @@ class TestErrorHandling:
 
             assert mock_emb.call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_bootstrap_failure_degrades_to_cache_miss(
+        self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
+    ):
+        """Collection bootstrap failures degrade search/store to a cache miss instead of raising."""
+        with patch.object(
+            SemanticCache,
+            "_get_or_create_collection_sync",
+            side_effect=RuntimeError("corrupt sqlite / held lock"),
+        ):
+            cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
+
+            cache_hit = await cache.search("test prompt")
+            assert cache_hit is None
+
+            # Must not raise
+            await cache.store("test prompt", sample_agent_response, sample_execution_result)
+
+    @pytest.mark.asyncio
+    async def test_get_stats_raises_when_count_fails(self, temp_cache_dir, api_key):
+        """get_stats must surface backend errors instead of reporting an empty healthy cache."""
+        cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
+        await cache._ensure_collection()
+
+        with patch.object(
+            cache, "_chroma_count", AsyncMock(side_effect=RuntimeError("db broken"))
+        ):
+            with pytest.raises(RuntimeError, match="db broken"):
+                await cache.get_stats()
+
 
 class TestCacheManagement:
     """Test cache management operations."""
@@ -597,19 +627,21 @@ class TestCacheManagement:
     @pytest.mark.asyncio
     async def test_clear_cache_removes_legacy_collections(self, temp_cache_dir, api_key):
         """Test that clear removes legacy collections as well as the active one."""
+        legacy_names = ("cyclic_semantic_cache_v1", "cyclic_semantic_cache_v2")
+
         cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
         await cache._ensure_collection()
-        cache.client.create_collection(name=SemanticCache.COLLECTION_NAME_V1)
-        cache.client.create_collection(name=SemanticCache.COLLECTION_NAME_V2)
+        for name in legacy_names:
+            cache.client.create_collection(name=name)
 
         await cache.clear()
 
-        for name in (SemanticCache.COLLECTION_NAME_V1, SemanticCache.COLLECTION_NAME_V2):
+        for name in legacy_names:
             with pytest.raises(NotFoundError):
                 cache.client.get_collection(name=name)
 
         assert cache.collection is not None
-        assert cache.collection.name == SemanticCache.COLLECTION_NAME_V3
+        assert cache.collection.name == cache.collection_name
 
     @pytest.mark.asyncio
     async def test_cache_stats_persistent_only(
@@ -657,6 +689,61 @@ class TestCacheManagement:
 
             assert cache_hit is not None
             assert cache_hit.code == sample_agent_response.code
+
+    @pytest.mark.asyncio
+    async def test_per_model_collection_isolation(
+        self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
+    ):
+        """Different embedding models get distinct collections and never see each other's entries."""
+        with patch("cyclic.cache.aembedding") as mock_embedding:
+            embedding = [0.1, 0.2, 0.3]
+            mock_response = MagicMock()
+            mock_response.data = [MagicMock()]
+            mock_response.data[0].embedding = embedding
+            mock_embedding.return_value = mock_response
+
+            cache_a = SemanticCache(
+                cache_dir=temp_cache_dir, api_key=api_key,
+                embedding_model="text-embedding-3-small",
+            )
+            cache_b = SemanticCache(
+                cache_dir=temp_cache_dir, api_key=api_key,
+                embedding_model="text-embedding-3-large",
+            )
+
+            assert cache_a.collection_name != cache_b.collection_name
+
+            await cache_a.store("shared prompt", sample_agent_response, sample_execution_result)
+
+            hit_a = await cache_a.search("shared prompt")
+            assert hit_a is not None
+
+            hit_b = await cache_b.search("shared prompt")
+            assert hit_b is None
+
+    @pytest.mark.asyncio
+    async def test_search_then_store_embeds_once(
+        self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
+    ):
+        """A search miss followed by a store of the same prompt reuses the memoized embedding."""
+        with patch("cyclic.cache.aembedding") as mock_embedding:
+            mock_response = MagicMock()
+            mock_response.data = [MagicMock()]
+            mock_response.data[0].embedding = [0.1, 0.2, 0.3]
+            mock_embedding.return_value = mock_response
+
+            cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
+
+            prompt = "print hello"
+            cache_hit = await cache.search(prompt)
+            assert cache_hit is None  # empty cache
+
+            await cache.store(prompt, sample_agent_response, sample_execution_result)
+
+            assert mock_embedding.call_count == 1
+
+            stats = await cache.get_stats()
+            assert stats["total_entries"] == 1
 
 
 class TestAsyncSafety:

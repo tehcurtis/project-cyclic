@@ -76,13 +76,12 @@ class CyclicLoop:
                 progress.update(task, description="[green]Cache check complete[/green]")
 
             if cached:
-                console.print(f"\n[bold cyan]✓ Cache hit![/bold cyan] (similarity: {cached.similarity:.2f})")
-                console.print("\n[bold]Cached Code:[/bold]")
-                console.print(Syntax(cached.code, "python", theme="monokai"))
-
-                if cached.execution_result.stdout:
-                    console.print("\n[bold]Output:[/bold]")
-                    console.print(Panel(cached.execution_result.stdout.strip(), border_style="green"))
+                self._display_result(
+                    cached.code,
+                    cached.execution_result.stdout,
+                    header=f"\n[bold cyan]✓ Cache hit![/bold cyan] (similarity: {cached.similarity:.2f})",
+                    code_label="Cached Code",
+                )
 
                 # Reconstruct AgentResponse from cache
                 agent_response = AgentResponse(
@@ -92,15 +91,7 @@ class CyclicLoop:
                 )
                 result = cached.execution_result
 
-                # Add to history
-                self._add_to_history({"role": "user", "content": prompt})
-                assistant_body = f"```python\n{agent_response.code}\n```"
-                if result.stdout:
-                    assistant_body += f"\n\nOutput: {result.stdout}"
-                self._add_to_history({
-                    "role": "assistant",
-                    "content": assistant_body,
-                })
+                self._record_success(prompt, agent_response, result)
 
                 return agent_response, result, 0, True
 
@@ -142,26 +133,18 @@ class CyclicLoop:
 
             # Evaluate
             if result.exit_code == 0:
-                console.print("\n[bold green]✓ Success![/bold green]")
-
-                # Print the generated code so user can see comments/implementation
-                console.print("\n[bold]Generated Code:[/bold]")
-                console.print(Syntax(agent_response.code, "python", theme="monokai"))
-
-                if result.stdout:
-                    console.print("\n[bold]Output:[/bold]")
-                    console.print(Panel(result.stdout.strip(), border_style="green"))
+                self._display_result(
+                    agent_response.code,
+                    result.stdout,
+                    header="\n[bold green]✓ Success![/bold green]",
+                    code_label="Generated Code",
+                )
 
                 # Store in cache if enabled (use original prompt, not retry-modified prompt)
                 if self.cache:
                     await self.cache.store(original_prompt, agent_response, result)
 
-                # Add successful interaction to history
-                self._add_to_history({"role": "user", "content": prompt})
-                self._add_to_history({
-                    "role": "assistant",
-                    "content": f"```python\n{agent_response.code}\n```\n\nOutput: {result.stdout}"
-                })
+                self._record_success(prompt, agent_response, result)
 
                 return agent_response, result, attempt, False
 
@@ -198,6 +181,26 @@ class CyclicLoop:
             raise RuntimeError("Loop completed without generating any code")
 
         return agent_response, result, attempt, False
+
+    def _display_result(self, code: str, stdout: str, header: str, code_label: str) -> None:
+        """Render a successful result (fresh or cached) to the console."""
+        console.print(header)
+        console.print(f"\n[bold]{code_label}:[/bold]")
+        console.print(Syntax(code, "python", theme="monokai"))
+
+        if stdout:
+            console.print("\n[bold]Output:[/bold]")
+            console.print(Panel(stdout.strip(), border_style="green"))
+
+    def _record_success(
+        self, prompt: str, agent_response: AgentResponse, result: ExecutionResult
+    ) -> None:
+        """Append a successful interaction (fresh or cached) to conversation history."""
+        self._add_to_history({"role": "user", "content": prompt})
+        body = f"```python\n{agent_response.code}\n```"
+        if result.stdout:
+            body += f"\n\nOutput: {result.stdout}"
+        self._add_to_history({"role": "assistant", "content": body})
 
     def _add_to_history(self, message: dict) -> None:
         """Add message to history with sliding window limit."""
@@ -268,6 +271,8 @@ def run(
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted by user[/yellow]")
         raise typer.Exit(code=130)
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"\n[red]Fatal error: {e}[/red]")
         logger.exception("Fatal error in CLI")

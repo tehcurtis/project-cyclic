@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import os
 import pathlib
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,6 +31,13 @@ from tenacity import (
 from .agent import AgentResponse
 from .sandbox import ExecutionResult
 
+# Shared retry policy for local ChromaDB operations.
+_chroma_retry = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((OSError, RuntimeError)),
+)
+
 
 @dataclass
 class CacheHit:
@@ -46,10 +54,23 @@ class CacheHit:
 class SemanticCache:
     """Semantic cache using ChromaDB and LiteLLM embeddings."""
 
-    COLLECTION_NAME_V1 = "cyclic_semantic_cache_v1"
-    COLLECTION_NAME_V2 = "cyclic_semantic_cache_v2"
-    COLLECTION_NAME_V3 = "cyclic_semantic_cache_v3"
+    COLLECTION_PREFIX = "cyclic_semantic_cache"
+    SCHEMA_VERSION = 4
     DEFAULT_THRESHOLD = 0.85
+
+    # Chroma collection names must be 3-63 chars, starting/ending alphanumeric.
+    _MAX_COLLECTION_NAME_LEN = 63
+
+    @classmethod
+    def _sanitize_model(cls, model: str) -> str:
+        """Sanitize an embedding model id for embedding into a Chroma collection name."""
+        sanitized = re.sub(r"[^a-z0-9._-]", "-", model.lower())
+        prefix = f"{cls.COLLECTION_PREFIX}_v{cls.SCHEMA_VERSION}_"
+        budget = cls._MAX_COLLECTION_NAME_LEN - len(prefix)
+        sanitized = sanitized[:budget]
+        # Name must end alphanumeric (the prefix guarantees the start).
+        sanitized = sanitized.rstrip("._-")
+        return sanitized or "default"
 
     def __init__(
         self,
@@ -84,6 +105,10 @@ class SemanticCache:
 
         self.similarity_threshold = similarity_threshold
         self.embedding_model = embedding_model
+        self.collection_name = (
+            f"{self.COLLECTION_PREFIX}_v{self.SCHEMA_VERSION}_"
+            f"{self._sanitize_model(embedding_model)}"
+        )
         self.api_key = api_key or os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.store_prompt = store_prompt
         self.store_outputs = store_outputs
@@ -100,47 +125,37 @@ class SemanticCache:
         self._chroma_lock = asyncio.Lock()
         self._init_lock = asyncio.Lock()
         self.collection: chromadb.Collection | None = None
+        self._embedding_memo: tuple[str, list[float]] | None = None
 
     def _get_or_create_collection_sync(self):
         with self._proc_lock:
             return self._bootstrap_collection_unlocked()
 
     def _bootstrap_collection_unlocked(self):
-        """Open or create the v3 collection; caller must hold ``_proc_lock``."""
-        collection = None
+        """Open or create the active collection; caller must hold ``_proc_lock``."""
         try:
-            collection = self.client.get_collection(name=self.COLLECTION_NAME_V3)
-            metadata = getattr(collection, "metadata", None) or {}
-            if metadata.get("hnsw:space") != "cosine":
-                logger.warning(
-                    f"Collection {self.COLLECTION_NAME_V3} exists but hnsw:space is not cosine. "
-                    "Recreating with cosine distance."
-                )
-                self.client.delete_collection(name=self.COLLECTION_NAME_V3)
-                collection = None
+            collection = self.client.get_collection(name=self.collection_name)
         except NotFoundError:
-            collection = None
-
-        if collection is None:
-            for old_name in (self.COLLECTION_NAME_V1, self.COLLECTION_NAME_V2):
-                try:
-                    self.client.get_collection(name=old_name)
-                    logger.warning(
-                        f"Found legacy semantic cache collection {old_name}. "
-                        f"Active cache is {self.COLLECTION_NAME_V3}; legacy data is not migrated. "
-                        "Run `cache clear` if you want to reclaim disk space."
-                    )
-                except NotFoundError:
-                    pass
+            stale = [
+                c.name
+                for c in self.client.list_collections()
+                if c.name.startswith(self.COLLECTION_PREFIX) and c.name != self.collection_name
+            ]
+            if stale:
+                logger.warning(
+                    f"Found stale semantic cache collections {stale}. "
+                    f"Active cache is {self.collection_name}; stale data is not migrated. "
+                    "Run `cache clear` if you want to reclaim disk space."
+                )
 
             collection = self.client.create_collection(
-                name=self.COLLECTION_NAME_V3,
+                name=self.collection_name,
                 metadata={
                     "description": "Semantic cache for Cyclic code generation",
                     "hnsw:space": "cosine",
                 },
             )
-            logger.debug(f"Created collection {self.COLLECTION_NAME_V3} with cosine distance")
+            logger.debug(f"Created collection {self.collection_name} with cosine distance")
 
         return collection
 
@@ -162,14 +177,10 @@ class SemanticCache:
 
     @staticmethod
     def _distance_to_similarity(distance: float) -> float:
-        """Map Chroma cosine distance in [0, 2] to similarity in [0, 1]."""
-        return max(0.0, min(1.0, 1.0 - (distance / 2.0)))
+        """Map Chroma cosine distance (1 - cos_sim, in [0, 2]) to cosine similarity clamped to [0, 1]."""
+        return max(0.0, min(1.0, 1.0 - distance))
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((OSError, IOError, RuntimeError)),
-    )
+    @_chroma_retry
     async def _chroma_query(self, query_embeddings, n_results=1):
         """Execute ChromaDB query in thread pool."""
 
@@ -181,47 +192,24 @@ class SemanticCache:
 
         return await asyncio.to_thread(_query_sync)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((OSError, IOError, RuntimeError)),
-    )
+    @_chroma_retry
     async def _chroma_upsert(self, ids, embeddings, metadatas):
         """Execute ChromaDB upsert in thread pool."""
 
         def _upsert_sync():
             with self._proc_lock:
                 try:
-                    if hasattr(self.collection, "upsert"):
-                        self.collection.upsert(
-                            ids=ids,
-                            embeddings=embeddings,
-                            metadatas=metadatas,
-                        )
-                    else:
-                        existing = self.collection.get(ids=ids)
-                        if existing["ids"]:
-                            self.collection.update(
-                                ids=ids,
-                                embeddings=embeddings,
-                                metadatas=metadatas,
-                            )
-                        else:
-                            self.collection.add(
-                                ids=ids,
-                                embeddings=embeddings,
-                                metadatas=metadatas,
-                            )
+                    self.collection.upsert(
+                        ids=ids,
+                        embeddings=embeddings,
+                        metadatas=metadatas,
+                    )
                 except sqlite3.OperationalError as e:
                     raise RuntimeError(f"Database contention: {e}") from e
 
         return await asyncio.to_thread(_upsert_sync)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((OSError, IOError, RuntimeError)),
-    )
+    @_chroma_retry
     async def _chroma_count(self):
         """Execute ChromaDB count in thread pool."""
 
@@ -273,11 +261,16 @@ class SemanticCache:
             logger.debug("No API key for embeddings, skipping cache search")
             return None
 
-        await self._ensure_collection()
+        try:
+            await self._ensure_collection()
+        except Exception as e:
+            logger.warning(f"Cache unavailable: {e}, falling back to normal generation")
+            return None
 
         async with self._chroma_lock:
             try:
                 query_embedding = await self._get_embedding(prompt)
+                self._embedding_memo = (prompt, query_embedding)
 
                 results = await self._chroma_query([query_embedding], n_results=1)
 
@@ -339,11 +332,19 @@ class SemanticCache:
             logger.debug("No API key for embeddings, skipping cache storage")
             return
 
-        await self._ensure_collection()
+        try:
+            await self._ensure_collection()
+        except Exception as e:
+            logger.warning(f"Cache unavailable: {e}, skipping cache storage")
+            return
 
         async with self._chroma_lock:
             try:
-                embedding = await self._get_embedding(prompt)
+                if self._embedding_memo is not None and self._embedding_memo[0] == prompt:
+                    embedding = self._embedding_memo[1]
+                else:
+                    embedding = await self._get_embedding(prompt)
+                    self._embedding_memo = (prompt, embedding)
 
                 doc_id = self._compute_doc_id(prompt, response.code)
 
@@ -385,15 +386,12 @@ class SemanticCache:
 
             def _clear_sync():
                 with self._proc_lock:
-                    for name in (
-                        self.COLLECTION_NAME_V1,
-                        self.COLLECTION_NAME_V2,
-                        self.COLLECTION_NAME_V3,
-                    ):
-                        try:
-                            self.client.delete_collection(name=name)
-                        except NotFoundError:
-                            pass
+                    for collection in self.client.list_collections():
+                        if collection.name.startswith(self.COLLECTION_PREFIX):
+                            try:
+                                self.client.delete_collection(name=collection.name)
+                            except NotFoundError:
+                                pass
                     self.collection = self._bootstrap_collection_unlocked()
 
             try:
@@ -408,30 +406,22 @@ class SemanticCache:
         await self._ensure_collection()
 
         async with self._chroma_lock:
+            count = await self._chroma_count()
+
+            cache_size_bytes = 0
             try:
-                count = await self._chroma_count()
-
-                cache_size_bytes = 0
-                try:
-                    for root, dirs, files in os.walk(self.cache_dir):
-                        for file in files:
-                            file_path = pathlib.Path(root) / file
-                            try:
-                                cache_size_bytes += file_path.stat().st_size
-                            except OSError:
-                                pass
-                except Exception as e:
-                    logger.debug(f"Could not calculate cache size: {e}")
-
-                return {
-                    "total_entries": count,
-                    "cache_dir": str(self.cache_dir),
-                    "cache_size_bytes": cache_size_bytes,
-                }
+                for root, dirs, files in os.walk(self.cache_dir):
+                    for file in files:
+                        file_path = pathlib.Path(root) / file
+                        try:
+                            cache_size_bytes += file_path.stat().st_size
+                        except OSError:
+                            pass
             except Exception as e:
-                logger.error(f"Failed to get cache stats: {e}")
-                return {
-                    "total_entries": 0,
-                    "cache_dir": str(self.cache_dir),
-                    "cache_size_bytes": 0,
-                }
+                logger.debug(f"Could not calculate cache size: {e}")
+
+            return {
+                "total_entries": count,
+                "cache_dir": str(self.cache_dir),
+                "cache_size_bytes": cache_size_bytes,
+            }
