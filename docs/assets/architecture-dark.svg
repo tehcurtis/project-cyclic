@@ -1,0 +1,257 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="cyclicArchTitleDark cyclicArchDescDark">
+<title id="cyclicArchTitleDark">Cyclic architecture diagram</title>
+<desc id="cyclicArchDescDark">Task prompt flows through a semantic cache lookup, LLM code generation, a static AST safety scan, and a hardened Docker sandbox with PEP 578 audit hooks. Failures feed back into conversation history and retry; successes are cached.</desc>
+<style>
+  text { font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+  .bg { fill: #0d1117; }
+
+  .zone-host { fill: #131920; stroke: #30363d; stroke-width: 1.5; }
+  .zone-host-label { fill: #9aa7b8; font-weight: 700; font-size: 12.5px; letter-spacing: .4px; }
+  .zone-host-sub { fill: #7d8798; font-size: 10.5px; font-style: italic; }
+
+  .zone-container { fill: #2a1c0c; stroke: #e3922f; stroke-width: 2; stroke-dasharray: 7 5; }
+  .zone-container-label { fill: #f3b969; font-weight: 700; font-size: 12.5px; letter-spacing: .4px; }
+  .zone-container-sub { fill: #d9a05e; font-size: 10.5px; font-style: italic; }
+
+  .node-entry { fill: #1b222c; stroke: #94a3b8; stroke-width: 1.75; }
+  .node-entry-t { fill: #e6edf3; font-weight: 700; font-size: 13.5px; }
+
+  .node-process { fill: #1b1f38; stroke: #818cf8; stroke-width: 1.75; }
+  .node-process-t { fill: #dfe2ff; font-weight: 700; font-size: 13.5px; }
+  .node-process-s { fill: #b4bbfb; font-size: 11px; }
+
+  .node-decision { fill: #241c38; stroke: #a78bfa; stroke-width: 1.75; }
+  .node-decision-t { fill: #ece6fd; font-weight: 700; font-size: 13.5px; }
+  .node-decision-s { fill: #cbb6fa; font-size: 11px; }
+
+  .node-security { fill: #2c2210; stroke: #f0a83a; stroke-width: 1.75; }
+  .node-security-t { fill: #fbdfae; font-weight: 700; font-size: 13.5px; }
+  .node-security-s { fill: #f0c17d; font-size: 11px; }
+
+  .node-inner { fill: #2a1c0f; stroke: #fb923c; stroke-width: 1.75; }
+  .node-inner-t { fill: #fed7ae; font-weight: 700; font-size: 13.5px; }
+  .node-inner-s { fill: #f3b380; font-size: 10.7px; }
+
+  .node-cache { fill: #0b2830; stroke: #22d3ee; stroke-width: 2.25; }
+  .node-cache-t { fill: #c7f5ff; font-weight: 700; font-size: 13.5px; }
+  .node-cache-s { fill: #7fe3f5; font-size: 11px; }
+
+  .node-success { fill: #0a2a1d; stroke: #34d399; stroke-width: 2.25; }
+  .node-success-t { fill: #c9f6e2; font-weight: 700; font-size: 14.5px; }
+  .node-success-s { fill: #86e3bc; font-size: 11px; }
+
+  .node-warn { fill: #2a1c0f; stroke: #fb923c; stroke-width: 1.75; }
+  .node-warn-t { fill: #fed7ae; font-weight: 700; font-size: 13.5px; }
+  .node-warn-s { fill: #f3b380; font-size: 11px; }
+
+  .node-fail { fill: #2c1416; stroke: #f87171; stroke-width: 2.25; }
+  .node-fail-t { fill: #fbd2d2; font-weight: 700; font-size: 13.5px; }
+  .node-fail-s { fill: #f4a3a3; font-size: 11px; }
+
+  .edge-happy { fill: none; stroke: #9aa7b8; stroke-width: 2; marker-end: url(#arrowHappyD); }
+  .edge-cache { fill: none; stroke: #22d3ee; stroke-width: 2; marker-end: url(#arrowCacheD); }
+  .edge-retry { fill: none; stroke: #f0a83a; stroke-width: 2; stroke-dasharray: 6 5; marker-end: url(#arrowRetryD); }
+  .edge-success { fill: none; stroke: #34d399; stroke-width: 2.25; marker-end: url(#arrowSuccessD); }
+
+  .lbl-bg { fill: #0d1117; opacity: 0.92; }
+  .lbl { fill: #c7d0dc; font-size: 11px; font-weight: 600; }
+  .lbl-cache { fill: #67d9ee; font-size: 11px; font-weight: 700; }
+  .lbl-retry { fill: #f0b158; font-size: 11px; font-weight: 700; }
+  .lbl-success { fill: #6be0ac; font-size: 11px; font-weight: 700; }
+
+  .badge-circle { fill: #1a1f27; stroke: #f0a83a; stroke-width: 2; }
+  .badge-text { fill: #f3b969; font-weight: 800; font-size: 13px; }
+
+  .legend-box { fill: #12171f; stroke: #2a323d; stroke-width: 1.25; }
+  .legend-title { fill: #9aa7b8; font-weight: 700; font-size: 11.5px; letter-spacing: .5px; }
+  .legend-text { fill: #c7d0dc; font-size: 11.5px; }
+</style>
+
+<defs>
+  <marker id="arrowHappyD" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#9aa7b8"/>
+  </marker>
+  <marker id="arrowCacheD" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/>
+  </marker>
+  <marker id="arrowRetryD" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#f0a83a"/>
+  </marker>
+  <marker id="arrowSuccessD" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#34d399"/>
+  </marker>
+</defs>
+
+<rect class="bg" x="0" y="0" width="1200" height="760"/>
+
+<!-- ===== Zones ===== -->
+<g>
+  <rect class="zone-host" x="20" y="10" width="1160" height="740" rx="18"/>
+  <text class="zone-host-label" x="40" y="34">HOST PROCESS</text>
+  <text class="zone-host-sub" x="40" y="50">CyclicLoop orchestrator &amp; CLI &#183; trusted</text>
+
+  <rect class="zone-container" x="955" y="55" width="210" height="300" rx="14"/>
+  <text class="zone-container-label" x="972" y="78">DOCKER CONTAINER</text>
+  <text class="zone-container-sub" x="972" y="94">untrusted execution</text>
+</g>
+
+<!-- ===== Edges (drawn under nodes) ===== -->
+<g>
+  <!-- A -> B -->
+  <path class="edge-happy" d="M190,147.5 L230,147.5"/>
+
+  <!-- B -> H (cache hit) -->
+  <path class="edge-cache" d="M325,100 L325,80"/>
+  <rect class="lbl-bg" x="331" y="79" width="118" height="15" rx="3"/>
+  <text class="lbl-cache" x="336" y="90">hit &#8805; threshold</text>
+
+  <!-- B -> C (miss/disabled) -->
+  <path class="edge-happy" d="M420,147.5 L460,147.5"/>
+  <rect class="lbl-bg" x="396" y="205" width="100" height="15" rx="3"/>
+  <text class="lbl" x="401" y="216">miss / disabled</text>
+
+  <!-- C -> D -->
+  <path class="edge-happy" d="M680,147.5 L730,147.5"/>
+
+  <!-- D -> E1 (safe, crosses into container) -->
+  <path class="edge-happy" d="M920,147.5 L955,147.5 L980,140"/>
+  <rect class="lbl-bg" x="922" y="140" width="32" height="15" rx="3"/>
+  <text class="lbl" x="925" y="151" style="font-size:10px">safe</text>
+
+  <!-- E1 -> E2 -->
+  <path class="edge-happy" d="M1060,175 L1060,190"/>
+
+  <!-- E2 -> G (exit code 0) -->
+  <path class="edge-success" d="M1060,300 L1060,430"/>
+  <rect class="lbl-bg" x="1000" y="357" width="90" height="15" rx="3"/>
+  <text class="lbl-success" x="1005" y="368">exit code 0</text>
+
+  <!-- D -> F (unsafe) -->
+  <path class="edge-retry" d="M825,195 L825,380 L600,380 L600,430"/>
+  <rect class="lbl-bg" x="799" y="283" width="60" height="15" rx="3"/>
+  <text class="lbl-retry" x="804" y="294">unsafe</text>
+
+  <!-- E2 -> F (non-zero/timeout) -->
+  <path class="edge-retry" d="M980,245 L900,245 L900,410 L680,410 L680,430"/>
+  <rect class="lbl-bg" x="808" y="402" width="130" height="15" rx="3"/>
+  <text class="lbl-retry" x="813" y="413">non-zero / timeout</text>
+
+  <!-- F -> I -->
+  <path class="edge-retry" d="M460,470 L420,470"/>
+
+  <!-- I -> C (yes, retry loop) -->
+  <path class="edge-retry" d="M325,430 L325,236 L570,236 L570,200"/>
+  <rect class="lbl-bg" x="410" y="227" width="34" height="15" rx="3"/>
+  <text class="lbl-retry" x="414" y="238">yes</text>
+
+  <!-- I -> J (no) -->
+  <path class="edge-retry" d="M230,470 L190,470"/>
+  <rect class="lbl-bg" x="197" y="452" width="30" height="15" rx="3"/>
+  <text class="lbl-retry" x="201" y="463">no</text>
+</g>
+
+<!-- ===== Nodes ===== -->
+<g>
+  <!-- A: Task prompt -->
+  <rect class="node-entry" x="40" y="112" width="150" height="70" rx="10"/>
+  <text class="node-entry-t" x="115" y="152" text-anchor="middle">Task prompt</text>
+
+  <!-- B: Semantic cache lookup -->
+  <rect class="node-decision" x="230" y="100" width="190" height="95" rx="10"/>
+  <text class="node-decision-t" x="325" y="142" text-anchor="middle">Semantic cache lookup</text>
+  <text class="node-decision-s" x="325" y="162" text-anchor="middle">cosine similarity &#8805; threshold?</text>
+
+  <!-- H: cache hit terminal -->
+  <rect class="node-cache" x="230" y="15" width="190" height="65" rx="10"/>
+  <text class="node-cache-t" x="325" y="42" text-anchor="middle">Return cached result</text>
+  <text class="node-cache-s" x="325" y="62" text-anchor="middle">zero LLM calls &#183; instant</text>
+
+  <!-- C: LLM generates code -->
+  <rect class="node-process" x="460" y="95" width="220" height="105" rx="10"/>
+  <text class="node-process-t" x="570" y="128" text-anchor="middle">LLM generates code</text>
+  <text class="node-process-s" x="570" y="146" text-anchor="middle">JSON mode &#8594; AgentResponse</text>
+  <text class="node-process-s" x="570" y="164" text-anchor="middle">code &#183; reasoning &#183; confidence</text>
+
+  <!-- D: Static AST safety scan -->
+  <rect class="node-security" x="730" y="100" width="190" height="95" rx="10"/>
+  <text class="node-security-t" x="825" y="142" text-anchor="middle">Static AST safety scan</text>
+  <text class="node-security-s" x="825" y="162" text-anchor="middle">blocks unsafe imports &amp; calls</text>
+
+  <!-- E1: runner.py -->
+  <rect class="node-inner" x="980" y="110" width="160" height="65" rx="9"/>
+  <text class="node-inner-t" x="1060" y="136" text-anchor="middle" style="font-size:12.5px">runner.py executes</text>
+  <text class="node-inner-s" x="1060" y="154" text-anchor="middle">restricted builtins dict</text>
+
+  <!-- E2: PEP 578 audit hook -->
+  <rect class="node-inner" x="980" y="190" width="160" height="110" rx="9"/>
+  <text class="node-inner-t" x="1060" y="227" text-anchor="middle" style="font-size:12.5px">PEP 578 audit hook</text>
+  <text class="node-inner-s" x="1060" y="247" text-anchor="middle">"cyclic_guard" watches</text>
+  <text class="node-inner-s" x="1060" y="261" text-anchor="middle">every syscall</text>
+  <text class="node-inner-s" x="1060" y="279" text-anchor="middle" style="font-size:9.8px">blocks socket &#183; exec &#183; ctypes &#183; path escape</text>
+
+  <!-- G: Success terminal -->
+  <rect class="node-success" x="955" y="430" width="210" height="80" rx="10"/>
+  <text class="node-success-t" x="1060" y="465" text-anchor="middle">Success</text>
+  <text class="node-success-s" x="1060" y="484" text-anchor="middle">display result + cache admit</text>
+
+  <!-- F: Feed violation into history -->
+  <rect class="node-warn" x="460" y="430" width="220" height="80" rx="10"/>
+  <text class="node-warn-t" x="570" y="462" text-anchor="middle" style="font-size:12.5px">Feed violation into history</text>
+  <text class="node-warn-s" x="570" y="482" text-anchor="middle">stderr &#8594; natural-language correction</text>
+
+  <!-- I: Retries left? -->
+  <rect class="node-decision" x="230" y="430" width="190" height="80" rx="10"/>
+  <text class="node-decision-t" x="325" y="462" text-anchor="middle">Retries left?</text>
+  <text class="node-decision-s" x="325" y="482" text-anchor="middle">max_retries</text>
+
+  <!-- J: Report failure -->
+  <rect class="node-fail" x="40" y="430" width="150" height="80" rx="10"/>
+  <text class="node-fail-t" x="115" y="465" text-anchor="middle">Report failure</text>
+  <text class="node-fail-s" x="115" y="484" text-anchor="middle">loop ends</text>
+</g>
+
+<!-- ===== Security-layer badges ===== -->
+<g>
+  <circle class="badge-circle" cx="910" cy="94" r="14"/>
+  <text class="badge-text" x="910" y="99" text-anchor="middle">1</text>
+
+  <circle class="badge-circle" cx="1130" cy="184" r="14"/>
+  <text class="badge-text" x="1130" y="189" text-anchor="middle">2</text>
+
+  <circle class="badge-circle" cx="1160" cy="58" r="15"/>
+  <text class="badge-text" x="1160" y="63" text-anchor="middle">3</text>
+</g>
+
+<!-- ===== Legend ===== -->
+<g>
+  <rect class="legend-box" x="40" y="555" width="1120" height="150" rx="12"/>
+
+  <text class="legend-title" x="60" y="578">PATHS</text>
+  <line x1="60" y1="596" x2="96" y2="596" class="edge-happy"/>
+  <text class="legend-text" x="104" y="600">Generation path &#8212; LLM &#8594; AST scan &#8594; sandbox</text>
+
+  <line x1="60" y1="620" x2="96" y2="620" class="edge-cache"/>
+  <text class="legend-text" x="104" y="624">Cache fast-path &#8212; skips generation &amp; execution entirely</text>
+
+  <line x1="60" y1="644" x2="96" y2="644" class="edge-retry"/>
+  <text class="legend-text" x="104" y="648">Repair / retry loop &#8212; error fed back into conversation history</text>
+
+  <line x1="60" y1="668" x2="96" y2="668" class="edge-success"/>
+  <text class="legend-text" x="104" y="672">Successful execution, result cached</text>
+
+  <text class="legend-title" x="620" y="578">SECURITY LAYERS</text>
+
+  <circle class="badge-circle" cx="634" cy="596" r="11"/>
+  <text class="badge-text" x="634" y="600" text-anchor="middle" style="font-size:11px">1</text>
+  <text class="legend-text" x="654" y="600">Static AST scan &#8212; blocks unsafe imports/calls before anything runs</text>
+
+  <circle class="badge-circle" cx="634" cy="628" r="11"/>
+  <text class="badge-text" x="634" y="632" text-anchor="middle" style="font-size:11px">2</text>
+  <text class="legend-text" x="654" y="632">Runtime audit hook &#8212; catches what static analysis can't</text>
+
+  <circle class="badge-circle" cx="634" cy="660" r="11"/>
+  <text class="badge-text" x="634" y="664" text-anchor="middle" style="font-size:11px">3</text>
+  <text class="legend-text" x="654" y="664">Container hardening &#8212; no network, read-only fs, dropped caps</text>
+</g>
+
+</svg>

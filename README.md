@@ -18,20 +18,10 @@ around that assumption.
 
 ## How it works
 
-```mermaid
-flowchart TD
-    A[Task prompt] --> B{Semantic cache<br/>lookup}
-    B -- "cosine similarity ≥ threshold" --> H[Return cached code + result]
-    B -- "miss / disabled" --> C[LLM generates code<br/>JSON mode → AgentResponse<br/>code, reasoning, confidence]
-    C --> D[Static AST safety scan<br/>blocked imports & calls]
-    D -- unsafe --> F[Feed violation back<br/>into conversation history]
-    D -- safe --> E[Hardened Docker sandbox<br/>PEP 578 audit hooks]
-    E -- exit code 0 --> G[Success:<br/>display result + cache admit]
-    E -- non-zero / timeout --> F
-    F --> I{Retries left?<br/>max_retries}
-    I -- yes --> C
-    I -- no --> J[Report failure]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+  <img src="docs/assets/architecture-light.svg" alt="Cyclic architecture: task prompt flows through semantic cache lookup, LLM code generation, static AST safety scan, and a hardened Docker sandbox with PEP 578 audit hooks; failures feed back into the conversation history for retry" width="100%">
+</picture>
 
 **Walkthrough:** `CyclicLoop.run()` (`cyclic/main.py`) first checks the `SemanticCache` for a
 prompt whose embedding is close enough to the current one; on a hit it replays the cached code and
