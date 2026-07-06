@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from loguru import logger
 from .safety import scan_code
 
+EXIT_SELF_TEST_FAILED = 3   # keep in sync with cyclic/runner.py
+EXIT_USER_CHECK_FAILED = 4
+EXIT_TIMEOUT = 124
+
 @dataclass
 class ExecutionResult:
     stdout: str
@@ -33,23 +37,50 @@ class DockerSandbox:
             logger.info(f"Pulling Docker image: {self.image}...")
             self.client.images.pull(self.image)
 
-    async def run(self, code: str, timeout: int = 10) -> ExecutionResult:
+    async def run(
+        self,
+        code: str,
+        timeout: int = 10,
+        test_code: str | None = None,
+        user_checks: str | None = None,
+    ) -> ExecutionResult:
         """
         Runs the provided Python code in an isolated container.
         Performs static analysis before execution to catch unsafe patterns.
+
+        Args:
+            code: The solution code to execute.
+            timeout: Execution timeout in seconds.
+            test_code: Optional agent self-test payload, run after ``code`` in
+                the same namespace. Failures exit 3.
+            user_checks: Optional user-supplied check payload, run after
+                ``test_code``. Failures exit 4.
         """
-        # 0. Static Safety Check
-        report = scan_code(code)
-        if not report.is_safe:
-            return ExecutionResult(
-                stdout="",
-                stderr="Safety Violation:\n" + "\n".join(report.issues),
-                exit_code=1
-            )
+        # 0. Static Safety Check - scan each payload separately for attribution.
+        for payload, label in (
+            (code, "generated code"),
+            (test_code, "test code"),
+            (user_checks, "user check"),
+        ):
+            if payload is None:
+                continue
+            report = scan_code(payload)
+            if not report.is_safe:
+                return ExecutionResult(
+                    stdout="",
+                    stderr=f"Safety Violation in {label}:\n" + "\n".join(report.issues),
+                    exit_code=1
+                )
 
-        return await asyncio.to_thread(self._run_sync, code, timeout)
+        return await asyncio.to_thread(self._run_sync, code, timeout, test_code, user_checks)
 
-    def _run_sync(self, code: str, timeout: int) -> ExecutionResult:
+    def _run_sync(
+        self,
+        code: str,
+        timeout: int,
+        test_code: str | None = None,
+        user_checks: str | None = None,
+    ) -> ExecutionResult:
         """
         Synchronous implementation of container execution.
         Uses runner.py with PEP 578 audit hooks for runtime security.
@@ -64,6 +95,12 @@ class DockerSandbox:
 
         command = ["python", "/runner.py"]
 
+        environment = {"CYCLIC_CODE_PAYLOAD": code}
+        if test_code is not None:
+            environment["CYCLIC_TEST_PAYLOAD"] = test_code
+        if user_checks is not None:
+            environment["CYCLIC_CHECK_PAYLOAD"] = user_checks
+
         container = None
         try:
             # Spin up the container with security hardening
@@ -74,7 +111,7 @@ class DockerSandbox:
                     command=command,
                     detach=True,
                     network_disabled=True,  # Block network access
-                    environment={"CYCLIC_CODE_PAYLOAD": code},  # Pass code via env var
+                    environment=environment,  # Pass code/tests/checks via env vars
                     # Resource limits
                     mem_limit="128m",
                     cpu_period=100000,
