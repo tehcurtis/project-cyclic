@@ -205,6 +205,32 @@ async def test_missing_test_code_consumes_attempt_without_sandbox_call():
 
 
 @pytest.mark.asyncio
+async def test_missing_test_code_every_attempt_returns_clean_failure():
+    """If the agent never produces test_code, run() returns cleanly with failure='missing_tests'."""
+    agent = StubAgent(
+        [
+            AgentResponse(code="print(1)", reasoning="r1", confidence=0.9, test_code=""),
+            AgentResponse(code="print(2)", reasoning="r2", confidence=0.9, test_code="  "),
+        ]
+    )
+    sandbox = StubSandbox([])
+    cache = make_cache(search_result=None)
+
+    loop = CyclicLoop(sandbox=sandbox, cache=cache, verify=True, max_retries=2)
+    loop.agent = agent
+
+    result = await loop.run("do something")
+
+    assert result.failure == "missing_tests"
+    assert result.verified is False
+    assert result.from_cache is False
+    assert result.attempts == 2
+    assert result.result.exit_code != 0
+    assert len(sandbox.calls) == 0
+    cache.store.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_no_verify_disables_verification_and_caching():
     """verify=False: sandbox gets test_code=None, success is verified=False, and cache never stores."""
     agent = StubAgent(

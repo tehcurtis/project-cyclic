@@ -275,8 +275,17 @@ class CyclicLoop:
         console.print(f"\n[bold red]✗ Failed after {self.max_retries} attempts[/bold red]")
 
         # Ensure we have values to return if the loop ran at least once
-        if 'agent_response' not in locals() or 'result' not in locals():
+        if 'agent_response' not in locals():
             raise RuntimeError("Loop completed without generating any code")
+
+        if 'result' not in locals():
+            # Every attempt was consumed by the missing_tests branch, so the
+            # sandbox was never called; synthesize a failure result.
+            result = ExecutionResult(
+                stdout="",
+                stderr="Agent never produced test_code; no code was executed",
+                exit_code=1,
+            )
 
         return LoopResult(
             agent_response=agent_response,
