@@ -11,12 +11,16 @@ class AgentResponse(BaseModel):
     code: str = Field(description="The Python code to execute")
     reasoning: str = Field(description="Explanation of why this code was generated")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score between 0 and 1")
+    test_code: str = Field(
+        default="",
+        description="Assert-based tests run after the code in the same namespace",
+    )
 
 
 class Agent:
     """Agent that generates Python code using LLMs via LiteLLM."""
 
-    SYSTEM_PROMPT = """You are a helpful Python code generation assistant.
+    LEGACY_SYSTEM_PROMPT = """You are a helpful Python code generation assistant.
 Generate Python code that solves the user's request.
 
 You must respond with a JSON object containing:
@@ -37,12 +41,52 @@ Example response:
   "confidence": 0.95
 }"""
 
+    VERIFICATION_SYSTEM_PROMPT = """You are a helpful Python code generation assistant.
+Generate Python code that solves the user's request, plus deterministic tests that prove it works.
+
+You must respond with a JSON object containing:
+- "code": The Python code to execute (as a string)
+- "reasoning": A brief explanation of your approach
+- "confidence": A confidence score between 0.0 and 1.0
+- "test_code": Assert-based tests that run immediately after "code", in the same namespace
+
+Important constraints on "code":
+- Do NOT use dangerous imports: os, subprocess, sys, socket, shutil, importlib
+- Do NOT use dangerous functions: eval, exec, open, __import__
+- Keep code simple and focused on the task
+- The code will run in an isolated Docker container with no network access
+
+Rules for "test_code":
+- Pure deterministic asserts only - no randomness, no time/clock dependence, no network
+- Runs immediately after "code" in the same namespace, so it may call functions/use variables
+  that "code" defined
+- Must not print or produce output of its own
+- No I/O except under /tmp
+- Same banned imports/functions as "code": no os, subprocess, sys, socket, shutil, importlib,
+  eval, exec, open, __import__
+- Do NOT merely re-run the same print statements from "code" - assert on computed values
+- Include 2-3 meaningful asserts that cover the requirements, including at least one edge case
+- Do NOT wrap asserts in try/except - a failing assert must propagate so it can be detected
+
+Structural guidance: if the task is to print something, put the logic in a function that
+returns the value, print the function's result in "code", and assert on the function's
+return value in "test_code".
+
+Example response:
+{
+  "code": "def greeting():\\n    return 'Hello, World!'\\n\\nprint(greeting())",
+  "reasoning": "Compute the greeting in a function so it can be tested, then print it",
+  "confidence": 0.95,
+  "test_code": "assert greeting() == 'Hello, World!'\\nassert isinstance(greeting(), str)\\nassert greeting() != ''"
+}"""
+
     def __init__(
         self,
         model: str = "gpt-4o-mini",
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: float = 0.7,
+        require_tests: bool = True,
     ):
         """
         Initialize the Agent.
@@ -52,11 +96,18 @@ Example response:
             api_key: API key for the LLM provider (defaults to env var)
             base_url: Custom base URL for the API (optional)
             temperature: Sampling temperature (0.0 to 1.0)
+            require_tests: If True (default), use the verification system prompt
+                that asks the model for self-tests via "test_code". If False, use
+                the legacy prompt so the model isn't confused by an unused field.
         """
         self.model = model
         self.api_key = api_key or os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.base_url = base_url
         self.temperature = temperature
+        self.require_tests = require_tests
+        self.system_prompt = (
+            self.VERIFICATION_SYSTEM_PROMPT if require_tests else self.LEGACY_SYSTEM_PROMPT
+        )
 
         if not self.api_key:
             logger.warning("No API key found. Set LITELLM_API_KEY or OPENAI_API_KEY environment variable.")
@@ -115,7 +166,7 @@ Example response:
 
     def _build_messages(self, prompt: str, history: Optional[List[dict]] = None) -> List[dict]:
         """Build the message list for the LLM API."""
-        messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": self.system_prompt}]
 
         # Add history if provided
         if history:
@@ -148,4 +199,3 @@ if __name__ == "__main__":
             print("\nNote: Set LITELLM_API_KEY or OPENAI_API_KEY environment variable to test.")
 
     asyncio.run(main())
-

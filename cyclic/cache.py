@@ -49,13 +49,14 @@ class CacheHit:
     execution_result: ExecutionResult
     similarity: float
     timestamp: str
+    test_code: str = ""
 
 
 class SemanticCache:
     """Semantic cache using ChromaDB and LiteLLM embeddings."""
 
     COLLECTION_PREFIX = "cyclic_semantic_cache"
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
     DEFAULT_THRESHOLD = 0.85
 
     # Chroma collection names must be 3-63 chars, starting/ending alphanumeric.
@@ -285,6 +286,11 @@ class SemanticCache:
 
                 metadata = results["metadatas"][0][0]
 
+                # Only verified entries may be served from cache; unverified
+                # (or pre-verification-schema) entries are treated as a miss.
+                if metadata.get("verified") is not True:
+                    return None
+
                 prompt_value: Optional[str] = None
                 if self.store_prompt:
                     prompt_value = metadata.get("prompt")
@@ -304,6 +310,7 @@ class SemanticCache:
                     ),
                     similarity=similarity,
                     timestamp=metadata["timestamp"],
+                    test_code=metadata.get("test_code", ""),
                 )
 
             except Exception as e:
@@ -318,6 +325,10 @@ class SemanticCache:
     ) -> None:
         """
         Store a successful execution in the cache.
+
+        Callers must only store verified successes (self-tests and any
+        user-required checks have passed) - this method itself does not
+        gate on verification, it trusts the caller.
 
         Args:
             prompt: User prompt
@@ -350,11 +361,13 @@ class SemanticCache:
 
                 metadata = {
                     "code": response.code,
+                    "test_code": response.test_code,
                     "reasoning": response.reasoning,
                     "confidence": float(response.confidence),
                     "exit_code": int(result.exit_code),
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "embedding_model": self.embedding_model,
+                    "verified": True,
                 }
 
                 if self.store_prompt:
