@@ -1,6 +1,5 @@
 import json
 import os
-from typing import List, Optional
 from pydantic import BaseModel, Field
 from litellm import acompletion
 from loguru import logger
@@ -40,8 +39,8 @@ Example response:
     def __init__(
         self,
         model: str = "gpt-4o-mini",
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
         temperature: float = 0.7,
     ):
         """
@@ -64,7 +63,7 @@ Example response:
     async def generate(
         self,
         prompt: str,
-        history: Optional[List[dict]] = None,
+        history: list[dict] | None = None,
     ) -> AgentResponse:
         """
         Generate Python code based on a prompt and conversation history.
@@ -113,7 +112,7 @@ Example response:
             logger.error(f"Agent generation failed: {e}")
             raise
 
-    def _build_messages(self, prompt: str, history: Optional[List[dict]] = None) -> List[dict]:
+    def _build_messages(self, prompt: str, history: list[dict] | None = None) -> list[dict]:
         """Build the message list for the LLM API."""
         messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
 
