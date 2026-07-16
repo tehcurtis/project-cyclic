@@ -1,20 +1,19 @@
 import ast
 from dataclasses import dataclass
-from typing import List, Set
 
 @dataclass
 class SafetyReport:
     is_safe: bool
-    issues: List[str]
+    issues: list[str]
 
 class SafetyScanner(ast.NodeVisitor):
     def __init__(self):
-        self.issues: List[str] = []
+        self.issues: list[str] = []
         # Blocked modules
-        self.blocked_imports: Set[str] = {'os', 'subprocess', 'sys', 'socket', 'shutil', 'importlib'}
+        self.blocked_imports: set[str] = {'os', 'subprocess', 'sys', 'socket', 'shutil', 'importlib'}
         # Blocked built-in functions
         # Note: 'open' is allowed here - runtime audit hooks will restrict file access
-        self.blocked_functions: Set[str] = {'eval', 'exec', '__import__'}
+        self.blocked_functions: set[str] = {'eval', 'exec', '__import__'}
 
     def visit_Import(self, node: ast.Import):
         for alias in node.names:
