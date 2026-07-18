@@ -8,11 +8,14 @@ from loguru import logger
 
 from .agent import Agent, AgentResponse
 from .cache import SemanticCache
+from .memory import Memory
 from .sandbox import DockerSandbox, ExecutionResult
 
 app = typer.Typer(help="Cyclic: Self-healing code execution agent")
 cache_app = typer.Typer(help="Cache management commands")
 app.add_typer(cache_app, name="cache")
+memory_app = typer.Typer(help="Memory management commands")
+app.add_typer(memory_app, name="memory")
 console = Console()
 
 
@@ -31,6 +34,7 @@ class CyclicLoop:
         max_history_messages: int = 20,
         sandbox: DockerSandbox | None = None,
         cache: SemanticCache | None = None,
+        memory: Memory | None = None,
     ):
         self.agent = Agent(model=model)
 
@@ -42,6 +46,7 @@ class CyclicLoop:
             self.sandbox = CyclicLoop._shared_sandbox
 
         self.cache = cache
+        self.memory = memory
         self.timeout = timeout
         self.max_retries = max_retries
         self.verbose = verbose
@@ -95,6 +100,21 @@ class CyclicLoop:
 
                 return agent_response, result, 0, True
 
+        if self.memory:
+            hits = self.memory.recall(original_prompt)
+            if hits:
+                blocks = "\n\n".join(
+                    f"Problem: {h['prompt']}\nSolution:\n```python\n{h['code']}\n```"
+                    for h in hits
+                )
+                self._add_to_history({
+                    "role": "user",
+                    "content": "Here are similar problems you solved successfully before. "
+                    "Use them as reference if helpful.\n\n" + blocks,
+                })
+                if self.verbose:
+                    console.print(f"[dim]Recalled {len(hits)} similar solutions from memory[/dim]")
+
         while attempt < self.max_retries:
             attempt += 1
 
@@ -144,6 +164,9 @@ class CyclicLoop:
                 if self.cache:
                     await self.cache.store(original_prompt, agent_response, result)
 
+                if self.memory:
+                    self.memory.remember(original_prompt, agent_response.code, agent_response.reasoning, success=True)
+
                 self._record_success(prompt, agent_response, result)
 
                 return agent_response, result, attempt, False
@@ -179,6 +202,15 @@ class CyclicLoop:
         # Ensure we have values to return if the loop ran at least once
         if 'agent_response' not in locals() or 'result' not in locals():
             raise RuntimeError("Loop completed without generating any code")
+
+        if self.memory:
+            self.memory.remember(
+                original_prompt,
+                agent_response.code,
+                agent_response.reasoning,
+                success=False,
+                error=self._format_error(result),
+            )
 
         return agent_response, result, attempt, False
 
@@ -235,6 +267,7 @@ def run(
         min=0.0,
         max=1.0,
     ),
+    no_memory: bool = typer.Option(False, "--no-memory", help="Disable solution memory"),
 ):
     """Run the self-healing code execution loop."""
     console.print("\n[bold cyan]Cyclic: Self-Healing Code Execution[/bold cyan]")
@@ -248,12 +281,20 @@ def run(
             logger.warning(f"Failed to initialize cache: {e}, continuing without cache")
             cache_instance = None
 
+    memory_instance = None
+    if not no_memory:
+        try:
+            memory_instance = Memory()
+        except Exception as e:
+            logger.warning(f"Failed to initialize memory: {e}, continuing without memory")
+
     loop = CyclicLoop(
         model=model,
         timeout=timeout,
         max_retries=max_retries,
         verbose=verbose,
         cache=cache_instance,
+        memory=memory_instance,
     )
 
     try:
@@ -302,6 +343,29 @@ def clear():
         cache = SemanticCache()
         asyncio.run(cache.clear())
         console.print("[green]Cache cleared successfully[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+@memory_app.command("stats")
+def memory_stats():
+    """Show memory statistics."""
+    try:
+        mem = Memory()
+        console.print(f"Stored solutions: {mem.count()}")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+@memory_app.command("clear")
+def memory_clear():
+    """Clear all stored solutions."""
+    try:
+        mem = Memory()
+        mem.clear()
+        console.print("Memory cleared.")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
