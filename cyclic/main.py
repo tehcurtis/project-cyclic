@@ -1,4 +1,6 @@
 import asyncio
+from contextlib import contextmanager
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -17,6 +19,18 @@ app.add_typer(cache_app, name="cache")
 memory_app = typer.Typer(help="Memory management commands")
 app.add_typer(memory_app, name="memory")
 console = Console()
+
+
+@contextmanager
+def _cli_errors():
+    """Shared error-reporting wrapper for CLI management commands."""
+    try:
+        yield
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
 
 
 class CyclicLoop:
@@ -53,7 +67,9 @@ class CyclicLoop:
         self.max_history_messages = max_history_messages
         self.history: list[dict] = []
 
-    async def run(self, prompt: str) -> tuple[AgentResponse, ExecutionResult, int, bool]:
+    async def run(
+        self, prompt: str
+    ) -> tuple[AgentResponse, ExecutionResult, int, bool]:
         """
         Execute the self-healing loop.
 
@@ -98,28 +114,26 @@ class CyclicLoop:
 
                 self._record_success(prompt, agent_response, result)
 
+                if self.memory:
+                    await self.memory.remember(
+                        original_prompt, agent_response.code, agent_response.reasoning
+                    )
+
                 return agent_response, result, 0, True
 
+        recall_block = None
         if self.memory:
-            hits = self.memory.recall(original_prompt)
-            if hits:
-                blocks = "\n\n".join(
-                    f"Problem: {h['prompt']}\nSolution:\n```python\n{h['code']}\n```"
-                    for h in hits
-                )
-                self._add_to_history({
-                    "role": "user",
-                    "content": "Here are similar problems you solved successfully before. "
-                    "Use them as reference if helpful.\n\n" + blocks,
-                })
-                if self.verbose:
-                    console.print(f"[dim]Recalled {len(hits)} similar solutions from memory[/dim]")
+            recall_block = await self.memory.recall_context(original_prompt)
+            if recall_block and self.verbose:
+                console.print("[dim]Recalled similar solutions from memory[/dim]")
 
         while attempt < self.max_retries:
             attempt += 1
 
             if attempt > 1:
-                console.print(f"\n[yellow]Retry attempt {attempt}/{self.max_retries}[/yellow]")
+                console.print(
+                    f"\n[yellow]Retry attempt {attempt}/{self.max_retries}[/yellow]"
+                )
 
             # Generate
             with Progress(
@@ -129,7 +143,14 @@ class CyclicLoop:
             ) as progress:
                 task = progress.add_task("Generating code...", total=None)
                 try:
-                    agent_response = await self.agent.generate(prompt, history=self.history)
+                    gen_prompt = (
+                        f"{recall_block}\n\nTask: {prompt}"
+                        if (recall_block and attempt == 1)
+                        else prompt
+                    )
+                    agent_response = await self.agent.generate(
+                        gen_prompt, history=self.history
+                    )
                     progress.update(task, description="[green]Code generated[/green]")
                 except Exception as e:
                     console.print(f"[red]Generation failed: {e}[/red]")
@@ -148,7 +169,9 @@ class CyclicLoop:
                 console=console,
             ) as progress:
                 task = progress.add_task("Executing code in sandbox...", total=None)
-                result = await self.sandbox.run(agent_response.code, timeout=self.timeout)
+                result = await self.sandbox.run(
+                    agent_response.code, timeout=self.timeout
+                )
                 progress.update(task, description="[green]Execution complete[/green]")
 
             # Evaluate
@@ -165,7 +188,9 @@ class CyclicLoop:
                     await self.cache.store(original_prompt, agent_response, result)
 
                 if self.memory:
-                    self.memory.remember(original_prompt, agent_response.code, agent_response.reasoning, success=True)
+                    await self.memory.remember(
+                        original_prompt, agent_response.code, agent_response.reasoning
+                    )
 
                 self._record_success(prompt, agent_response, result)
 
@@ -173,48 +198,55 @@ class CyclicLoop:
 
             # Failure - prepare feedback for retry
             error_msg = self._format_error(result)
-            console.print(f"\n[bold red]✗ Execution failed (attempt {attempt}/{self.max_retries})[/bold red]")
+            console.print(
+                f"\n[bold red]✗ Execution failed (attempt {attempt}/{self.max_retries})[/bold red]"
+            )
 
             if self.verbose:
                 console.print("\n[bold]Error Details:[/bold]")
                 if result.stderr:
-                    console.print(Panel(result.stderr.strip(), border_style="red", title="stderr"))
+                    console.print(
+                        Panel(result.stderr.strip(), border_style="red", title="stderr")
+                    )
                 if result.stdout:
-                    console.print(Panel(result.stdout.strip(), border_style="yellow", title="stdout"))
+                    console.print(
+                        Panel(
+                            result.stdout.strip(), border_style="yellow", title="stdout"
+                        )
+                    )
 
             # Add failure to history for context
             self._add_to_history({"role": "user", "content": prompt})
-            self._add_to_history({
-                "role": "assistant",
-                "content": f"```python\n{agent_response.code}\n```"
-            })
-            self._add_to_history({
-                "role": "user",
-                "content": f"The code failed with error: {error_msg}. Please fix it."
-            })
+            self._add_to_history(
+                {
+                    "role": "assistant",
+                    "content": f"```python\n{agent_response.code}\n```",
+                }
+            )
+            self._add_to_history(
+                {
+                    "role": "user",
+                    "content": f"The code failed with error: {error_msg}. Please fix it.",
+                }
+            )
 
             # Update prompt for next iteration
             prompt = f"Previous attempt failed: {error_msg}. Please fix the code."
 
         # Max retries exceeded
-        console.print(f"\n[bold red]✗ Failed after {self.max_retries} attempts[/bold red]")
+        console.print(
+            f"\n[bold red]✗ Failed after {self.max_retries} attempts[/bold red]"
+        )
 
         # Ensure we have values to return if the loop ran at least once
-        if 'agent_response' not in locals() or 'result' not in locals():
+        if "agent_response" not in locals() or "result" not in locals():
             raise RuntimeError("Loop completed without generating any code")
-
-        if self.memory:
-            self.memory.remember(
-                original_prompt,
-                agent_response.code,
-                agent_response.reasoning,
-                success=False,
-                error=self._format_error(result),
-            )
 
         return agent_response, result, attempt, False
 
-    def _display_result(self, code: str, stdout: str, header: str, code_label: str) -> None:
+    def _display_result(
+        self, code: str, stdout: str, header: str, code_label: str
+    ) -> None:
         """Render a successful result (fresh or cached) to the console."""
         console.print(header)
         console.print(f"\n[bold]{code_label}:[/bold]")
@@ -239,7 +271,7 @@ class CyclicLoop:
         self.history.append(message)
         # Keep only the last max_history_messages
         if len(self.history) > self.max_history_messages:
-            self.history = self.history[-self.max_history_messages:]
+            self.history = self.history[-self.max_history_messages :]
 
     def _format_error(self, result: ExecutionResult) -> str:
         """Format execution error for feedback."""
@@ -256,10 +288,16 @@ class CyclicLoop:
 def run(
     prompt: str = typer.Argument(..., help="Task description for code generation"),
     model: str = typer.Option("gpt-4o-mini", "--model", "-m", help="LLM model to use"),
-    max_retries: int = typer.Option(3, "--max-retries", "-r", help="Maximum retry attempts"),
-    timeout: int = typer.Option(10, "--timeout", "-t", help="Execution timeout in seconds"),
+    max_retries: int = typer.Option(
+        3, "--max-retries", "-r", help="Maximum retry attempts"
+    ),
+    timeout: int = typer.Option(
+        10, "--timeout", "-t", help="Execution timeout in seconds"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
-    cache: bool = typer.Option(True, "--cache/--no-cache", help="Enable semantic cache"),
+    cache: bool = typer.Option(
+        True, "--cache/--no-cache", help="Enable semantic cache"
+    ),
     cache_threshold: float = typer.Option(
         0.85,
         "--cache-threshold",
@@ -267,7 +305,9 @@ def run(
         min=0.0,
         max=1.0,
     ),
-    no_memory: bool = typer.Option(False, "--no-memory", help="Disable solution memory"),
+    no_memory: bool = typer.Option(
+        False, "--no-memory", help="Disable solution memory"
+    ),
 ):
     """Run the self-healing code execution loop."""
     console.print("\n[bold cyan]Cyclic: Self-Healing Code Execution[/bold cyan]")
@@ -286,7 +326,9 @@ def run(
         try:
             memory_instance = Memory()
         except Exception as e:
-            logger.warning(f"Failed to initialize memory: {e}, continuing without memory")
+            logger.warning(
+                f"Failed to initialize memory: {e}, continuing without memory"
+            )
 
     loop = CyclicLoop(
         model=model,
@@ -298,7 +340,9 @@ def run(
     )
 
     try:
-        agent_response, result, attempts, served_from_cache = asyncio.run(loop.run(prompt))
+        agent_response, result, attempts, served_from_cache = asyncio.run(
+            loop.run(prompt)
+        )
 
         if result.exit_code == 0:
             if served_from_cache:
@@ -323,54 +367,41 @@ def run(
 @cache_app.command()
 def stats():
     """Show cache statistics."""
-    try:
+    with _cli_errors():
         cache = SemanticCache()
         stats = asyncio.run(cache.get_stats())
         console.print("\n[bold cyan]Cache Statistics[/bold cyan]\n")
         console.print(f"Total entries: {stats['total_entries']}")
-        cache_size_mb = stats['cache_size_bytes'] / (1024 * 1024)
+        cache_size_mb = stats["cache_size_bytes"] / (1024 * 1024)
         console.print(f"Cache size: {cache_size_mb:.2f} MB")
         console.print(f"Cache directory: {stats['cache_dir']}")
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(code=1)
 
 
 @cache_app.command()
 def clear():
     """Clear the semantic cache."""
-    try:
+    with _cli_errors():
         cache = SemanticCache()
         asyncio.run(cache.clear())
         console.print("[green]Cache cleared successfully[/green]")
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(code=1)
 
 
 @memory_app.command("stats")
 def memory_stats():
     """Show memory statistics."""
-    try:
+    with _cli_errors():
         mem = Memory()
-        console.print(f"Stored solutions: {mem.count()}")
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(code=1)
+        console.print(f"Stored solutions: {asyncio.run(mem.count())}")
 
 
 @memory_app.command("clear")
 def memory_clear():
     """Clear all stored solutions."""
-    try:
+    with _cli_errors():
         mem = Memory()
-        mem.clear()
+        asyncio.run(mem.clear())
         console.print("Memory cleared.")
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
     app()
-

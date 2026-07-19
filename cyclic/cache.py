@@ -5,11 +5,9 @@ import pathlib
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Optional
 
 import chromadb
-from chromadb.config import Settings
 from chromadb.errors import NotFoundError
 from filelock import FileLock
 from litellm import aembedding
@@ -29,19 +27,14 @@ from tenacity import (
 )
 
 from .agent import AgentResponse
+from .chroma_utils import chroma_retry, new_persistent_client, utc_now_iso
 from .sandbox import ExecutionResult
-
-# Shared retry policy for local ChromaDB operations.
-_chroma_retry = retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((OSError, RuntimeError)),
-)
 
 
 @dataclass
 class CacheHit:
     """Represents a cache hit with all relevant data."""
+
     prompt: Optional[str]
     code: str
     reasoning: str
@@ -109,14 +102,13 @@ class SemanticCache:
             f"{self.COLLECTION_PREFIX}_v{self.SCHEMA_VERSION}_"
             f"{self._sanitize_model(embedding_model)}"
         )
-        self.api_key = api_key or os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.api_key = (
+            api_key or os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+        )
         self.store_prompt = store_prompt
         self.store_outputs = store_outputs
 
-        self.client = chromadb.PersistentClient(
-            path=str(self.cache_dir),
-            settings=Settings(anonymized_telemetry=False),
-        )
+        self.client = new_persistent_client(self.cache_dir)
 
         self._proc_lock = FileLock(
             str(self.cache_dir / ".cyclic_cache.lock"),
@@ -139,7 +131,8 @@ class SemanticCache:
             stale = [
                 c.name
                 for c in self.client.list_collections()
-                if c.name.startswith(self.COLLECTION_PREFIX) and c.name != self.collection_name
+                if c.name.startswith(self.COLLECTION_PREFIX)
+                and c.name != self.collection_name
             ]
             if stale:
                 logger.warning(
@@ -155,7 +148,9 @@ class SemanticCache:
                     "hnsw:space": "cosine",
                 },
             )
-            logger.debug(f"Created collection {self.collection_name} with cosine distance")
+            logger.debug(
+                f"Created collection {self.collection_name} with cosine distance"
+            )
 
         return collection
 
@@ -164,7 +159,9 @@ class SemanticCache:
             return
         async with self._init_lock:
             if self.collection is None:
-                self.collection = await asyncio.to_thread(self._get_or_create_collection_sync)
+                self.collection = await asyncio.to_thread(
+                    self._get_or_create_collection_sync
+                )
 
     def _compute_doc_id(self, prompt: str, code: str) -> str:
         """Compute deterministic document ID from prompt and code."""
@@ -180,7 +177,7 @@ class SemanticCache:
         """Map Chroma cosine distance (1 - cos_sim, in [0, 2]) to cosine similarity clamped to [0, 1]."""
         return max(0.0, min(1.0, 1.0 - distance))
 
-    @_chroma_retry
+    @chroma_retry
     async def _chroma_query(self, query_embeddings, n_results=1):
         """Execute ChromaDB query in thread pool."""
 
@@ -192,7 +189,7 @@ class SemanticCache:
 
         return await asyncio.to_thread(_query_sync)
 
-    @_chroma_retry
+    @chroma_retry
     async def _chroma_upsert(self, ids, embeddings, metadatas):
         """Execute ChromaDB upsert in thread pool."""
 
@@ -209,7 +206,7 @@ class SemanticCache:
 
         return await asyncio.to_thread(_upsert_sync)
 
-    @_chroma_retry
+    @chroma_retry
     async def _chroma_count(self):
         """Execute ChromaDB count in thread pool."""
 
@@ -307,7 +304,9 @@ class SemanticCache:
                 )
 
             except Exception as e:
-                logger.warning(f"Cache search failed: {e}, falling back to normal generation")
+                logger.warning(
+                    f"Cache search failed: {e}, falling back to normal generation"
+                )
                 return None
 
     async def store(
@@ -340,7 +339,10 @@ class SemanticCache:
 
         async with self._chroma_lock:
             try:
-                if self._embedding_memo is not None and self._embedding_memo[0] == prompt:
+                if (
+                    self._embedding_memo is not None
+                    and self._embedding_memo[0] == prompt
+                ):
                     embedding = self._embedding_memo[1]
                 else:
                     embedding = await self._get_embedding(prompt)
@@ -353,7 +355,7 @@ class SemanticCache:
                     "reasoning": response.reasoning,
                     "confidence": float(response.confidence),
                     "exit_code": int(result.exit_code),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": utc_now_iso(),
                     "embedding_model": self.embedding_model,
                 }
 
