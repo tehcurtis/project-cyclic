@@ -67,6 +67,7 @@ def cyclic_guard(event: str, args: tuple[Any, ...]) -> None:
 
 class SecurityError(Exception):
     """Raised when a security violation is detected."""
+
     pass
 
 
@@ -76,34 +77,62 @@ def create_safe_globals() -> dict[str, Any]:
     """
     safe_builtins = {
         # Basic types
-        'int', 'float', 'str', 'bool', 'list', 'dict', 'tuple', 'set',
+        "int",
+        "float",
+        "str",
+        "bool",
+        "list",
+        "dict",
+        "tuple",
+        "set",
         # Import functionality
-        '__import__',
+        "__import__",
         # Basic functions
-        'print', 'len', 'range', 'enumerate', 'zip', 'map', 'filter',
-        'sorted', 'reversed', 'min', 'max', 'sum', 'abs', 'round',
+        "print",
+        "len",
+        "range",
+        "enumerate",
+        "zip",
+        "map",
+        "filter",
+        "sorted",
+        "reversed",
+        "min",
+        "max",
+        "sum",
+        "abs",
+        "round",
         # Type conversions
-        'chr', 'ord', 'hex', 'oct', 'bin',
+        "chr",
+        "ord",
+        "hex",
+        "oct",
+        "bin",
         # File operations (restricted by runtime audit hook)
-        'open',
+        "open",
         # System exit
-        'exit', 'quit',
+        "exit",
+        "quit",
         # Exceptions
-        'Exception', 'ValueError', 'TypeError', 'IndexError', 'KeyError',
-        'AttributeError', 'RuntimeError',
+        "Exception",
+        "ValueError",
+        "TypeError",
+        "IndexError",
+        "KeyError",
+        "AttributeError",
+        "RuntimeError",
     }
 
     # Import only safe builtins
     import builtins
+
     restricted_builtins = {
-        name: getattr(builtins, name)
-        for name in safe_builtins
-        if hasattr(builtins, name)
+        name: getattr(builtins, name) for name in safe_builtins if hasattr(builtins, name)
     }
 
     return {
-        '__builtins__': restricted_builtins,
-        '__name__': '__main__',
+        "__builtins__": restricted_builtins,
+        "__name__": "__main__",
     }
 
 
@@ -135,4 +164,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

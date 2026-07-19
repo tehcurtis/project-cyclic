@@ -22,18 +22,14 @@ async def test_recall_block_used_as_transient_prefix_and_not_persisted():
     memory.remember = AsyncMock()
 
     sandbox = AsyncMock()
-    sandbox.run = AsyncMock(
-        return_value=ExecutionResult(stdout="ok", stderr="", exit_code=0)
-    )
+    sandbox.run = AsyncMock(return_value=ExecutionResult(stdout="ok", stderr="", exit_code=0))
 
     loop = CyclicLoop(cache=None, memory=memory, sandbox=sandbox)
 
     with patch.object(
         Agent,
         "generate",
-        AsyncMock(
-            return_value=AgentResponse(code="print('x')", reasoning="r", confidence=0.9)
-        ),
+        AsyncMock(return_value=AgentResponse(code="print('x')", reasoning="r", confidence=0.9)),
     ) as mock_generate:
         original_prompt = "write a function that adds two numbers"
         await loop.run(original_prompt)

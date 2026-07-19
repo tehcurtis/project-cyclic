@@ -1,11 +1,11 @@
 import asyncio
+import contextlib
 import hashlib
 import os
 import pathlib
 import re
 import sqlite3
 from dataclasses import dataclass
-from typing import Optional
 
 import chromadb
 from chromadb.errors import NotFoundError
@@ -35,7 +35,7 @@ from .sandbox import ExecutionResult
 class CacheHit:
     """Represents a cache hit with all relevant data."""
 
-    prompt: Optional[str]
+    prompt: str | None
     code: str
     reasoning: str
     confidence: float
@@ -67,10 +67,10 @@ class SemanticCache:
 
     def __init__(
         self,
-        cache_dir: Optional[str] = None,
+        cache_dir: str | None = None,
         similarity_threshold: float = DEFAULT_THRESHOLD,
         embedding_model: str = "text-embedding-3-small",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         store_prompt: bool = False,
         store_outputs: bool = True,
     ):
@@ -102,9 +102,7 @@ class SemanticCache:
             f"{self.COLLECTION_PREFIX}_v{self.SCHEMA_VERSION}_"
             f"{self._sanitize_model(embedding_model)}"
         )
-        self.api_key = (
-            api_key or os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
-        )
+        self.api_key = api_key or os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.store_prompt = store_prompt
         self.store_outputs = store_outputs
 
@@ -131,8 +129,7 @@ class SemanticCache:
             stale = [
                 c.name
                 for c in self.client.list_collections()
-                if c.name.startswith(self.COLLECTION_PREFIX)
-                and c.name != self.collection_name
+                if c.name.startswith(self.COLLECTION_PREFIX) and c.name != self.collection_name
             ]
             if stale:
                 logger.warning(
@@ -148,9 +145,7 @@ class SemanticCache:
                     "hnsw:space": "cosine",
                 },
             )
-            logger.debug(
-                f"Created collection {self.collection_name} with cosine distance"
-            )
+            logger.debug(f"Created collection {self.collection_name} with cosine distance")
 
         return collection
 
@@ -159,9 +154,7 @@ class SemanticCache:
             return
         async with self._init_lock:
             if self.collection is None:
-                self.collection = await asyncio.to_thread(
-                    self._get_or_create_collection_sync
-                )
+                self.collection = await asyncio.to_thread(self._get_or_create_collection_sync)
 
     def _compute_doc_id(self, prompt: str, code: str) -> str:
         """Compute deterministic document ID from prompt and code."""
@@ -174,7 +167,8 @@ class SemanticCache:
 
     @staticmethod
     def _distance_to_similarity(distance: float) -> float:
-        """Map Chroma cosine distance (1 - cos_sim, in [0, 2]) to cosine similarity clamped to [0, 1]."""
+        """Map Chroma cosine distance (1 - cos_sim, in [0, 2]) to cosine similarity clamped to
+        [0, 1]."""
         return max(0.0, min(1.0, 1.0 - distance))
 
     @chroma_retry
@@ -244,7 +238,7 @@ class SemanticCache:
             logger.error(f"Failed to generate embedding: {e}")
             raise
 
-    async def search(self, prompt: str) -> Optional[CacheHit]:
+    async def search(self, prompt: str) -> CacheHit | None:
         """
         Search for similar prompts in the cache.
 
@@ -282,7 +276,7 @@ class SemanticCache:
 
                 metadata = results["metadatas"][0][0]
 
-                prompt_value: Optional[str] = None
+                prompt_value: str | None = None
                 if self.store_prompt:
                     prompt_value = metadata.get("prompt")
 
@@ -304,9 +298,7 @@ class SemanticCache:
                 )
 
             except Exception as e:
-                logger.warning(
-                    f"Cache search failed: {e}, falling back to normal generation"
-                )
+                logger.warning(f"Cache search failed: {e}, falling back to normal generation")
                 return None
 
     async def store(
@@ -339,10 +331,7 @@ class SemanticCache:
 
         async with self._chroma_lock:
             try:
-                if (
-                    self._embedding_memo is not None
-                    and self._embedding_memo[0] == prompt
-                ):
+                if self._embedding_memo is not None and self._embedding_memo[0] == prompt:
                     embedding = self._embedding_memo[1]
                 else:
                     embedding = await self._get_embedding(prompt)
@@ -390,10 +379,8 @@ class SemanticCache:
                 with self._proc_lock:
                     for collection in self.client.list_collections():
                         if collection.name.startswith(self.COLLECTION_PREFIX):
-                            try:
+                            with contextlib.suppress(NotFoundError):
                                 self.client.delete_collection(name=collection.name)
-                            except NotFoundError:
-                                pass
                     self.collection = self._bootstrap_collection_unlocked()
 
             try:
@@ -412,13 +399,11 @@ class SemanticCache:
 
             cache_size_bytes = 0
             try:
-                for root, dirs, files in os.walk(self.cache_dir):
+                for root, _dirs, files in os.walk(self.cache_dir):
                     for file in files:
                         file_path = pathlib.Path(root) / file
-                        try:
+                        with contextlib.suppress(OSError):
                             cache_size_bytes += file_path.stat().st_size
-                        except OSError:
-                            pass
             except Exception as e:
                 logger.debug(f"Could not calculate cache size: {e}")
 

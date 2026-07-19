@@ -1,12 +1,14 @@
 import json
 import os
-from pydantic import BaseModel, Field
+
 from litellm import acompletion
 from loguru import logger
+from pydantic import BaseModel, Field
 
 
 class AgentResponse(BaseModel):
     """Structured response from the Agent."""
+
     code: str = Field(description="The Python code to execute")
     reasoning: str = Field(description="Explanation of why this code was generated")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score between 0 and 1")
@@ -58,7 +60,9 @@ Example response:
         self.temperature = temperature
 
         if not self.api_key:
-            logger.warning("No API key found. Set LITELLM_API_KEY or OPENAI_API_KEY environment variable.")
+            logger.warning(
+                "No API key found. Set LITELLM_API_KEY or OPENAI_API_KEY environment variable."
+            )
 
     async def generate(
         self,
@@ -79,7 +83,9 @@ Example response:
             ValueError: If API key is missing or response is invalid
         """
         if not self.api_key:
-            raise ValueError("API key is required. Set LITELLM_API_KEY or OPENAI_API_KEY environment variable.")
+            raise ValueError(
+                "API key is required. Set LITELLM_API_KEY or OPENAI_API_KEY environment variable."
+            )
 
         messages = self._build_messages(prompt, history)
 
@@ -103,7 +109,7 @@ Example response:
                 data = json.loads(content)
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON response: {content}")
-                raise ValueError(f"Invalid JSON response from LLM: {e}")
+                raise ValueError(f"Invalid JSON response from LLM: {e}") from e
 
             # Validate and create AgentResponse
             return AgentResponse(**data)
@@ -147,4 +153,3 @@ if __name__ == "__main__":
             print("\nNote: Set LITELLM_API_KEY or OPENAI_API_KEY environment variable to test.")
 
     asyncio.run(main())
-

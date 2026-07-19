@@ -91,7 +91,9 @@ class TestCoreCacheOperations:
             mock_response.data[0].embedding = embedding
             mock_embedding.return_value = mock_response
 
-            cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key, similarity_threshold=0.85)
+            cache = SemanticCache(
+                cache_dir=temp_cache_dir, api_key=api_key, similarity_threshold=0.85
+            )
 
             await cache.store("print hello world", sample_agent_response, sample_execution_result)
 
@@ -121,7 +123,9 @@ class TestCoreCacheOperations:
 
             mock_embedding.side_effect = embedding_side_effect
 
-            cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key, similarity_threshold=0.85)
+            cache = SemanticCache(
+                cache_dir=temp_cache_dir, api_key=api_key, similarity_threshold=0.85
+            )
 
             await cache.store("print hello", sample_agent_response, sample_execution_result)
 
@@ -174,7 +178,8 @@ class TestDeterministicIdsAndUpsert:
     async def test_deterministic_id_upsert(
         self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
     ):
-        """Test that storing same (prompt, code) twice results in single entry with updated timestamp."""
+        """Test that storing same (prompt, code) twice results in single entry with updated
+        timestamp."""
         with patch("cyclic.cache.aembedding") as mock_embedding:
             embedding = [0.1, 0.2, 0.3]
             mock_response = MagicMock()
@@ -258,9 +263,7 @@ class TestCosineDistanceSpace:
     """Test cosine distance space pinning."""
 
     @pytest.mark.asyncio
-    async def test_collection_has_cosine_distance_pinned(
-        self, temp_cache_dir, api_key
-    ):
+    async def test_collection_has_cosine_distance_pinned(self, temp_cache_dir, api_key):
         """Test that collection is created with cosine distance pinned."""
         cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
         await cache._ensure_collection()
@@ -280,7 +283,9 @@ class TestCosineDistanceSpace:
             mock_response.data[0].embedding = embedding
             mock_embedding.return_value = mock_response
 
-            cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key, similarity_threshold=0.0)
+            cache = SemanticCache(
+                cache_dir=temp_cache_dir, api_key=api_key, similarity_threshold=0.0
+            )
 
             await cache.store("test prompt", sample_agent_response, sample_execution_result)
             cache_hit = await cache.search("test prompt")
@@ -342,9 +347,7 @@ class TestPrivacyDefaults:
             assert cache_hit.prompt is None
 
     @pytest.mark.asyncio
-    async def test_outputs_stored_by_default(
-        self, temp_cache_dir, sample_agent_response, api_key
-    ):
+    async def test_outputs_stored_by_default(self, temp_cache_dir, sample_agent_response, api_key):
         """Test that stdout/stderr are stored by default."""
         with patch("cyclic.cache.aembedding") as mock_embedding:
             embedding = [0.1, 0.2, 0.3]
@@ -416,9 +419,7 @@ class TestEdgeCases:
             assert cache_hit is None
 
     @pytest.mark.asyncio
-    async def test_metadata_preservation(
-        self, temp_cache_dir, api_key
-    ):
+    async def test_metadata_preservation(self, temp_cache_dir, api_key):
         """Test that all metadata fields are preserved."""
         with patch("cyclic.cache.aembedding") as mock_embedding:
             embedding = [0.1, 0.2, 0.3]
@@ -592,11 +593,11 @@ class TestErrorHandling:
         cache = SemanticCache(cache_dir=temp_cache_dir, api_key=api_key)
         await cache._ensure_collection()
 
-        with patch.object(
-            cache, "_chroma_count", AsyncMock(side_effect=RuntimeError("db broken"))
+        with (
+            patch.object(cache, "_chroma_count", AsyncMock(side_effect=RuntimeError("db broken"))),
+            pytest.raises(RuntimeError, match="db broken"),
         ):
-            with pytest.raises(RuntimeError, match="db broken"):
-                await cache.get_stats()
+            await cache.get_stats()
 
 
 class TestCacheManagement:
@@ -694,7 +695,8 @@ class TestCacheManagement:
     async def test_per_model_collection_isolation(
         self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
     ):
-        """Different embedding models get distinct collections and never see each other's entries."""
+        """Different embedding models get distinct collections and never see each other's
+        entries."""
         with patch("cyclic.cache.aembedding") as mock_embedding:
             embedding = [0.1, 0.2, 0.3]
             mock_response = MagicMock()
@@ -703,11 +705,13 @@ class TestCacheManagement:
             mock_embedding.return_value = mock_response
 
             cache_a = SemanticCache(
-                cache_dir=temp_cache_dir, api_key=api_key,
+                cache_dir=temp_cache_dir,
+                api_key=api_key,
                 embedding_model="text-embedding-3-small",
             )
             cache_b = SemanticCache(
-                cache_dir=temp_cache_dir, api_key=api_key,
+                cache_dir=temp_cache_dir,
+                api_key=api_key,
                 embedding_model="text-embedding-3-large",
             )
 
@@ -754,8 +758,10 @@ class TestAsyncSafety:
         self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
     ):
         """Test that ChromaDB operations are executed in thread pool."""
-        with patch("cyclic.cache.aembedding") as mock_embedding, \
-             patch("asyncio.to_thread") as mock_to_thread:
+        with (
+            patch("cyclic.cache.aembedding") as mock_embedding,
+            patch("asyncio.to_thread") as mock_to_thread,
+        ):
             embedding = [0.1, 0.2, 0.3]
             mock_response = MagicMock()
             mock_response.data = [MagicMock()]

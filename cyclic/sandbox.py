@@ -1,15 +1,20 @@
 import asyncio
-import docker
+import contextlib
 import pathlib
 from dataclasses import dataclass
+
+import docker
 from loguru import logger
+
 from .safety import scan_code
+
 
 @dataclass
 class ExecutionResult:
     stdout: str
     stderr: str
     exit_code: int
+
 
 class DockerSandbox:
     def __init__(self, image: str = "python:3.12-slim"):
@@ -42,9 +47,7 @@ class DockerSandbox:
         report = scan_code(code)
         if not report.is_safe:
             return ExecutionResult(
-                stdout="",
-                stderr="Safety Violation:\n" + "\n".join(report.issues),
-                exit_code=1
+                stdout="", stderr="Safety Violation:\n" + "\n".join(report.issues), exit_code=1
             )
 
         return await asyncio.to_thread(self._run_sync, code, timeout)
@@ -55,12 +58,7 @@ class DockerSandbox:
         Uses runner.py with PEP 578 audit hooks for runtime security.
         """
         # Mount runner.py into container at /runner.py (read-only)
-        volumes = {
-            str(self._runner_path): {
-                'bind': '/runner.py',
-                'mode': 'ro'
-            }
-        }
+        volumes = {str(self._runner_path): {"bind": "/runner.py", "mode": "ro"}}
 
         command = ["python", "/runner.py"]
 
@@ -83,9 +81,9 @@ class DockerSandbox:
                     user="65534:65534",  # 'nobody' user
                     working_dir="/tmp",
                     read_only=True,  # Read-only filesystem
-                    tmpfs={'/tmp': ''},  # Writable /tmp via tmpfs
+                    tmpfs={"/tmp": ""},  # Writable /tmp via tmpfs
                     volumes=volumes,  # Mount runner.py
-                    cap_drop=['ALL'],  # Drop all Linux capabilities
+                    cap_drop=["ALL"],  # Drop all Linux capabilities
                 )
             except docker.errors.APIError as e:
                 logger.error(f"Failed to create container: {e}")
@@ -122,11 +120,7 @@ class DockerSandbox:
                 stdout = ""
                 stderr = log_output
 
-            return ExecutionResult(
-                stdout=stdout,
-                stderr=stderr,
-                exit_code=exit_code
-            )
+            return ExecutionResult(stdout=stdout, stderr=stderr, exit_code=exit_code)
 
         except docker.errors.ContainerError as e:
             return ExecutionResult("", str(e), 1)
@@ -136,10 +130,9 @@ class DockerSandbox:
         finally:
             # Ensure cleanup happens even if python crashes
             if container:
-                try:
+                with contextlib.suppress(Exception):
                     container.remove(force=True)
-                except Exception:
-                    pass
+
 
 if __name__ == "__main__":
     # Quick Test Loop
@@ -156,6 +149,9 @@ if __name__ == "__main__":
         print("Test 3 (Expect Timeout):", await sandbox.run("while True: pass", timeout=2))
 
         # Test 4: Safety Violation
-        print("Test 4 (Expect Safety Violation):", await sandbox.run("import os; os.system('echo hacked')"))
+        print(
+            "Test 4 (Expect Safety Violation):",
+            await sandbox.run("import os; os.system('echo hacked')"),
+        )
 
     asyncio.run(main())

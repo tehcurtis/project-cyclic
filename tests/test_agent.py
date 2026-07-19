@@ -4,6 +4,7 @@ These are plain sync tests with no Docker or network dependency.
 """
 
 import pytest
+
 from cyclic.agent import Agent
 
 
@@ -28,9 +29,7 @@ def test_build_messages_with_history():
     """Test that _build_messages includes history between system and user messages."""
     agent = Agent()
 
-    messages = agent._build_messages(
-        "hello", history=[{"role": "user", "content": "prior"}]
-    )
+    messages = agent._build_messages("hello", history=[{"role": "user", "content": "prior"}])
 
     assert messages == [
         {"role": "system", "content": Agent.SYSTEM_PROMPT},

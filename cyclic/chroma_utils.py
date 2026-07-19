@@ -1,7 +1,7 @@
 """Shared ChromaDB infrastructure used by both SemanticCache and Memory."""
 
 import pathlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import chromadb
 from chromadb.config import Settings
@@ -22,7 +22,7 @@ chroma_retry = retry(
 
 def utc_now_iso() -> str:
     """Return the current UTC time as an ISO 8601 string."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def new_persistent_client(path: str | pathlib.Path) -> chromadb.PersistentClient:

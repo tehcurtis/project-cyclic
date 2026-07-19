@@ -83,7 +83,7 @@ class Memory:
             distances = results["distances"][0]
 
             hits = []
-            for document, metadata, distance in zip(documents, metadatas, distances):
+            for document, metadata, distance in zip(documents, metadatas, distances, strict=True):
                 similarity = max(0.0, min(1.0, 1.0 - distance))
                 if similarity < self.min_similarity:
                     continue
@@ -102,12 +102,11 @@ class Memory:
         blocks = []
         for hit in hits:
             if hit["prompt"]:
-                blocks.append(
-                    f"Problem: {hit['prompt']}\nSolution:\n```python\n{hit['code']}\n```"
-                )
+                blocks.append(f"Problem: {hit['prompt']}\nSolution:\n```python\n{hit['code']}\n```")
             else:
                 blocks.append(
-                    f"A similar problem you solved before — solution:\n```python\n{hit['code']}\n```"
+                    "A similar problem you solved before — solution:\n"
+                    f"```python\n{hit['code']}\n```"
                 )
 
         return (
