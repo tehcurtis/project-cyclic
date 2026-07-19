@@ -1,28 +1,39 @@
 import ast
 from dataclasses import dataclass
 
+
 @dataclass
 class SafetyReport:
     is_safe: bool
     issues: list[str]
 
+
 class SafetyScanner(ast.NodeVisitor):
     def __init__(self):
         self.issues: list[str] = []
         # Blocked modules
-        self.blocked_imports: set[str] = {'os', 'subprocess', 'sys', 'socket', 'shutil', 'importlib'}
+        self.blocked_imports: set[str] = {
+            "os",
+            "subprocess",
+            "sys",
+            "socket",
+            "shutil",
+            "importlib",
+        }
         # Blocked built-in functions
         # Note: 'open' is allowed here - runtime audit hooks will restrict file access
-        self.blocked_functions: set[str] = {'eval', 'exec', '__import__'}
+        self.blocked_functions: set[str] = {"eval", "exec", "__import__"}
 
     def visit_Import(self, node: ast.Import):
         for alias in node.names:
             if alias.name in self.blocked_imports:
                 self.issues.append(f"Importing '{alias.name}' is not allowed.")
             # Check for submodules like 'os.path' if 'os' is banned
-            base_module = alias.name.split('.')[0]
+            base_module = alias.name.split(".")[0]
             if base_module in self.blocked_imports:
-                self.issues.append(f"Importing '{alias.name}' (submodule of '{base_module}') is not allowed.")
+                self.issues.append(
+                    f"Importing '{alias.name}' (submodule of '{base_module}') is not allowed."
+                )
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom):
@@ -30,16 +41,18 @@ class SafetyScanner(ast.NodeVisitor):
             module_name = node.module
             if module_name in self.blocked_imports:
                 self.issues.append(f"Importing from '{module_name}' is not allowed.")
-            base_module = module_name.split('.')[0]
+            base_module = module_name.split(".")[0]
             if base_module in self.blocked_imports:
-                 self.issues.append(f"Importing from '{module_name}' (submodule of '{base_module}') is not allowed.")
+                self.issues.append(
+                    f"Importing from '{module_name}' (submodule of '{base_module}') is not allowed."
+                )
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call):
-        if isinstance(node.func, ast.Name):
-            if node.func.id in self.blocked_functions:
-                self.issues.append(f"Calling '{node.func.id}' is not allowed.")
+        if isinstance(node.func, ast.Name) and node.func.id in self.blocked_functions:
+            self.issues.append(f"Calling '{node.func.id}' is not allowed.")
         self.generic_visit(node)
+
 
 def scan_code(code: str) -> SafetyReport:
     """
@@ -54,7 +67,4 @@ def scan_code(code: str) -> SafetyReport:
     scanner = SafetyScanner()
     scanner.visit(tree)
 
-    return SafetyReport(
-        is_safe=len(scanner.issues) == 0,
-        issues=scanner.issues
-    )
+    return SafetyReport(is_safe=len(scanner.issues) == 0, issues=scanner.issues)

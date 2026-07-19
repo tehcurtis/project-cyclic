@@ -4,6 +4,7 @@ Tests various obfuscation techniques that bypass AST-based static analysis.
 """
 
 import pytest
+
 from cyclic.sandbox import DockerSandbox
 
 
@@ -188,4 +189,3 @@ assert sorted(result) == [1, 2], f"Expected [1, 2], got {result}"
 
     assert result.exit_code == 0
     assert "Result: [1, 2]" in result.stdout
-
