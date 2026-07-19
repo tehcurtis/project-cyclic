@@ -83,7 +83,7 @@ class Memory:
             distances = results["distances"][0]
 
             hits = []
-            for document, metadata, distance in zip(documents, metadatas, distances, strict=False):
+            for document, metadata, distance in zip(documents, metadatas, distances, strict=True):
                 similarity = max(0.0, min(1.0, 1.0 - distance))
                 if similarity < self.min_similarity:
                     continue
