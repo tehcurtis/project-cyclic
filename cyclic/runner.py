@@ -19,7 +19,17 @@ def cyclic_guard(event: str, args: tuple[Any, ...]) -> None:
         raise SecurityError(f"Security Violation: Network access blocked ({event})")
 
     # Block process creation
-    if event in ("os.system", "os.spawn", "os.spawnve", "os.spawnv", "os.spawnvp", "os.spawnvpe"):
+    if event in (
+        "os.system",
+        "os.spawn",
+        "os.spawnve",
+        "os.spawnv",
+        "os.spawnvp",
+        "os.spawnvpe",
+        "os.exec",
+        "os.posix_spawn",
+        "os.fork",
+    ):
         raise SecurityError(f"Security Violation: Process execution blocked ({event})")
 
     if event == "subprocess.Popen":

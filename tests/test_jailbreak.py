@@ -189,3 +189,24 @@ assert sorted(result) == [1, 2], f"Expected [1, 2], got {result}"
 
     assert result.exit_code == 0
     assert "Result: [1, 2]" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_os_fork_blocked_at_runtime():
+    """Test that os.fork is blocked by the audit hook via a route the AST scanner misses."""
+    sandbox = DockerSandbox()
+
+    # Aliasing __import__ evades both the import ban and the bare-name call
+    # check in the static scanner, so only the runtime audit hook can stop this.
+    code = """
+imp = __import__
+os_mod = imp('os')
+os_mod.fork()
+"""
+
+    result = await sandbox.run(code, timeout=5)
+
+    assert result.exit_code != 0
+    combined = result.stderr + result.stdout
+    assert "Security Violation" in combined
+    assert "Process execution blocked (os.fork)" in combined
