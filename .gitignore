@@ -11,6 +11,7 @@ __pycache__/
 .vscode/
 .idea/
 .cursor/
+.cursorrules
 .codex/
 .claude/
 CLAUDE.md

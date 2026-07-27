@@ -1,6 +1,0 @@
-# Code Style & Comments
-- Avoid verbose, tutorial-style comments that explain standard tooling or practices (e.g., "uv.lock should be committed for reproducibility").
-- Assume the reader is an experienced developer who understands standard tools (git, uv, poetry, etc.).
-- Only comment on complex, non-obvious, or project-specific logic.
-- Do not add comments that sound like generic LLM explanations.
-
