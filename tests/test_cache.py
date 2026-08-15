@@ -104,6 +104,31 @@ class TestCoreCacheOperations:
             assert cache_hit.similarity >= 0.85
 
     @pytest.mark.asyncio
+    async def test_cache_hit_with_dict_shaped_embedding_item(
+        self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
+    ):
+        """litellm can return response.data[0] as a plain dict rather than an object with an
+        `.embedding` attribute; the cache must handle that shape instead of falling back."""
+        with patch("cyclic.cache.aembedding") as mock_embedding:
+            mock_response = MagicMock()
+            mock_response.data = [
+                {"embedding": [0.1, 0.2, 0.3, 0.4, 0.5], "index": 0, "object": "embedding"}
+            ]
+            mock_embedding.return_value = mock_response
+
+            cache = SemanticCache(
+                cache_dir=temp_cache_dir, api_key=api_key, similarity_threshold=0.85
+            )
+
+            await cache.store("print hello world", sample_agent_response, sample_execution_result)
+
+            cache_hit = await cache.search("print hello world")
+            assert cache_hit is not None
+            assert cache_hit.code == sample_agent_response.code
+            assert 0.0 <= cache_hit.similarity <= 1.0
+            assert cache_hit.similarity >= 0.85
+
+    @pytest.mark.asyncio
     async def test_cache_miss_dissimilar_prompt(
         self, temp_cache_dir, sample_agent_response, sample_execution_result, api_key
     ):

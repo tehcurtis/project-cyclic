@@ -233,7 +233,10 @@ class SemanticCache:
             )
             if not response or not response.data:
                 raise ValueError("Empty embedding response")
-            return response.data[0].embedding
+            item = response.data[0]
+            if isinstance(item, dict):
+                return item["embedding"]
+            return item.embedding
         except Exception as e:
             logger.error(f"Failed to generate embedding: {e}")
             raise
