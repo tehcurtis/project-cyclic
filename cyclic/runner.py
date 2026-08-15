@@ -83,62 +83,15 @@ class SecurityError(Exception):
 
 def create_safe_globals() -> dict[str, Any]:
     """
-    Create a restricted globals dictionary with only safe builtins.
+    Create a globals dictionary whose builtins exclude dynamic code execution
+    and interactive entry points. Real containment comes from the AST scanner,
+    the audit hook, and the container; this layer only removes the obvious
+    dynamic-execution builtins.
     """
-    safe_builtins = {
-        # Basic types
-        "int",
-        "float",
-        "str",
-        "bool",
-        "list",
-        "dict",
-        "tuple",
-        "set",
-        # Import functionality
-        "__import__",
-        # Basic functions
-        "print",
-        "len",
-        "range",
-        "enumerate",
-        "zip",
-        "map",
-        "filter",
-        "sorted",
-        "reversed",
-        "min",
-        "max",
-        "sum",
-        "abs",
-        "round",
-        # Type conversions
-        "chr",
-        "ord",
-        "hex",
-        "oct",
-        "bin",
-        # File operations (restricted by runtime audit hook)
-        "open",
-        # System exit
-        "exit",
-        "quit",
-        # Exceptions
-        "Exception",
-        "ValueError",
-        "TypeError",
-        "IndexError",
-        "KeyError",
-        "AttributeError",
-        "RuntimeError",
-    }
-
-    # Import only safe builtins
     import builtins
 
-    restricted_builtins = {
-        name: getattr(builtins, name) for name in safe_builtins if hasattr(builtins, name)
-    }
+    denied = {"eval", "exec", "compile", "input", "breakpoint"}
+    restricted_builtins = {name: obj for name, obj in vars(builtins).items() if name not in denied}
 
     return {
         "__builtins__": restricted_builtins,
