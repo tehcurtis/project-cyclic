@@ -192,6 +192,47 @@ assert sorted(result) == [1, 2], f"Expected [1, 2], got {result}"
 
 
 @pytest.mark.asyncio
+async def test_class_based_code_executes():
+    """Regression test for the missing __build_class__ builtin: class
+    definitions (e.g. a LeetCode-295-style MedianFinder) must execute
+    successfully end to end in the container."""
+    sandbox = DockerSandbox()
+
+    code = """
+import heapq
+
+class MedianFinder:
+    def __init__(self):
+        self.small = []  # max-heap (negated)
+        self.large = []  # min-heap
+
+    def addNum(self, num):
+        heapq.heappush(self.small, -num)
+        heapq.heappush(self.large, -heapq.heappop(self.small))
+        if len(self.large) > len(self.small):
+            heapq.heappush(self.small, -heapq.heappop(self.large))
+
+    def findMedian(self):
+        if len(self.small) > len(self.large):
+            return -self.small[0]
+        return (-self.small[0] + self.large[0]) / 2
+
+mf = MedianFinder()
+mf.addNum(1)
+mf.addNum(2)
+print(f"Median: {mf.findMedian()}")
+mf.addNum(3)
+print(f"Median: {mf.findMedian()}")
+"""
+
+    result = await sandbox.run(code, timeout=5)
+
+    assert result.exit_code == 0
+    assert "Median: 1.5" in result.stdout
+    assert "Median: 2" in result.stdout
+
+
+@pytest.mark.asyncio
 async def test_os_fork_blocked_at_runtime():
     """Test that os.fork is blocked by the audit hook via a route the AST scanner misses."""
     sandbox = DockerSandbox()

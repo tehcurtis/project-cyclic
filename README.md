@@ -164,17 +164,14 @@ raising `SecurityError` (caught in `runner.py` and turned into a
   `sys.base_exec_prefix` (so the interpreter can read its own standard
   library). Everything else is rejected.
 
-On top of the audit hook, `create_safe_globals()` builds a restricted
-`__builtins__` dict containing only an explicit allowlist: basic types,
-`print`, iteration/aggregation helpers (`len`, `range`, `enumerate`, `zip`,
-`map`, `filter`, `sorted`, `reversed`, `min`, `max`, `sum`, `abs`, `round`),
-a few numeric/char conversions, `open` (governed by the hook above),
-`exit`/`quit`, `__import__`, and a small set of built-in exception types.
-Anything not on that list, like `getattr`, `input`, or `compile`, is
-stripped from the executed code's global namespace. This is friction rather
-than a boundary: the allowlist keeps `__import__`, so code can always
-recover the full builtins module via `__import__('builtins')`. Actual
-containment comes from the audit hook below and the container around it.
+On top of the audit hook, `create_safe_globals()` builds a `__builtins__`
+dict from the full set of Python builtins, minus a small denylist
+(`eval`, `exec`, `compile`, `input`, `breakpoint`). Executed code still has
+everything else, including `__import__`, `getattr`, `open` (governed by the
+hook above), and every ordinary type and exception. This is friction against
+dynamic code execution rather than a boundary: it does not stop code from
+reaching dangerous functionality through other means. Actual containment
+comes from the audit hook below and the container around it.
 
 This is the layer that actually stops the obfuscation case Layer 1 can
 miss: even if a call to a dangerous function is built dynamically and
